@@ -38,18 +38,29 @@
 
   /* ---------------- folders ---------------- */
 
-  // 大文件夹内部的单元尺寸：按文件夹实际宽度均分，使内容铺满
+  // 文件夹内图标大小档位（相对主格子）
+  const FOLDER_SCALES = { small: 0.5, medium: 0.66, large: 0.82, same: 1 }
+
+  function folderScale () {
+    return FOLDER_SCALES[store.settings.folderIconSize] || FOLDER_SCALES.medium
+  }
+
+  // 大文件夹内部的单元尺寸：只由"文件夹内图标大小"决定，
+  // 与文件夹本身尺寸无关 —— 这样不同尺寸的文件夹内图标大小一致。
+  // 列数按文件夹可用宽度自动排布，放不下的内容可滚动浏览。
   function innerMetrics (folderSc) {
     const cell = currentCell()
     const box = tilePixelBox(folderSc)
+    const scale = folderScale()
+    const unit = Math.max(26, Math.round(cell * scale))
+    const gap = Math.max(3, Math.round(4 * scale))
     const pad = 6
-    const gap = 4
-    const labelH = store.settings.showLabels ? 22 : 0
+    const headH = 20
     const innerW = Math.max(40, box.w - pad * 2)
-    const target = Math.max(34, Math.round(cell * 0.5))
-    const cols = Math.max(1, Math.floor((innerW + gap) / (target + gap)))
-    const unit = Math.max(28, Math.floor((innerW - (cols - 1) * gap) / cols))
-    return { cols: cols, unit: unit, gap: gap, pad: pad, labelH: labelH, innerW: innerW }
+    const innerH = Math.max(unit, box.h - pad * 2 - headH)
+    const cols = Math.max(1, Math.floor((innerW + gap) / (unit + gap)))
+    const labelH = store.settings.showLabels ? Math.round(unit * 0.34) : 0
+    return { cols: cols, unit: unit, gap: gap, pad: pad, labelH: labelH, innerW: innerW, innerH: innerH }
   }
 
   function innerIconSize (sc, m) {
@@ -88,19 +99,23 @@
       tile.style.gridColumn = 'span ' + sc.col
       tile.style.gridRow = 'span ' + sc.row
       const head = el('div', 'folder-head')
+      head.title = '点击查看全部图标'
       const nameEl = el('span', 'folder-name')
       nameEl.textContent = sc.name
-      nameEl.title = sc.name
       head.appendChild(nameEl)
       head.appendChild(el('span', 'folder-count', String(count)))
+      head.addEventListener('click', e => {
+        e.stopPropagation()
+        if (KL.dialogs && KL.dialogs.folderView) KL.dialogs.folderView(sc.id)
+      })
       tile.appendChild(head)
       if (sc.color) tile.style.background = sc.color
       const m = innerMetrics(sc)
-      tile.style.setProperty('--inner-cols', String(m.cols))
       const inner = el('div', 'folder-inner')
       inner.style.gridTemplateColumns = 'repeat(' + m.cols + ', ' + m.unit + 'px)'
       inner.style.gridAutoRows = m.unit + 'px'
       inner.style.gap = m.gap + 'px'
+      inner.style.maxHeight = m.innerH + 'px'
       const kids = store.childrenOf(sc.id)
       for (const k of kids) {
         const node = buildInnerTile(k, m, sc)

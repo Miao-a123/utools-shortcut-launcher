@@ -237,14 +237,14 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   gap: 6px;
   padding: 6px;
   border-radius: var(--tile-radius);
-  border: 1px solid transparent;
-  background: transparent;
+  border: var(--tile-border-w, 1px) solid var(--tile-border-color, transparent);
+  background: var(--tile-bg, transparent);
   color: var(--text-2);
   cursor: pointer;
   overflow: hidden;
   transition: background .12s, border-color .12s, transform .1s;
 }
-.tile:hover { background: var(--hover); border-color: var(--border); color: var(--text); }
+.tile:hover { background: var(--hover); color: var(--text); }
 .tile:active { transform: scale(.97); }
 .tile.selected { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
 .tile.dragging { opacity: .35; }
@@ -309,16 +309,27 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
 }
 .tile .folder-head {
   display: flex; align-items: center; gap: 6px;
-  font-size: 11px; color: var(--text-2); flex: 0 0 auto;
+  font-size: 11px; color: var(--text-2);
+  flex: 0 0 auto; cursor: pointer;
+  border-radius: 6px; padding: 1px 4px; margin: -1px -4px;
+  max-width: 100%;
 }
+.tile .folder-head:hover { background: var(--hover); color: var(--text); }
 .tile .folder-head .folder-name {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600;
 }
-.tile .folder-head .folder-count { color: var(--text-3); }
+.tile .folder-head .folder-count { color: var(--text-3); flex: 0 0 auto; }
 .tile .folder-inner {
   display: grid; justify-content: start; align-content: start;
-  overflow: hidden; flex: 1 1 auto;
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding-right: 2px;
 }
+.tile .folder-inner::-webkit-scrollbar { width: 6px; }
+.tile .folder-inner::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+.tile .folder-inner::-webkit-scrollbar-track { background: transparent; }
 
 .inner-tile {
   position: relative;
@@ -389,6 +400,19 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fv-empty { grid-column: 1 / -1; text-align: center; color: var(--text-3); font-size: 12.5px; padding: 30px 0; }
+
+/* ---------------- color picker row ---------------- */
+
+.chips.color-row { gap: 6px; flex-wrap: wrap; align-items: center; }
+.chip.swatch {
+  width: 20px; height: 20px; padding: 0; border-radius: 6px;
+  border: 1px solid var(--border); cursor: pointer;
+}
+.chip.swatch.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+.color-input {
+  width: 28px; height: 22px; padding: 0; border: 1px solid var(--border);
+  border-radius: 6px; background: transparent; cursor: pointer;
+}
 
 .tile .badge {
   position: absolute; top: 4px; right: 4px;

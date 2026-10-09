@@ -35,6 +35,9 @@
     if (grid) grid.style.setProperty('--cell', cell + 'px')
     const sw = Math.max(120, Math.min(420, parseInt(s.sidebarWidth, 10) || 184))
     document.documentElement.style.setProperty('--sidebar-w', sw + 'px')
+    document.documentElement.style.setProperty('--tile-bg', s.tileBgColor || 'transparent')
+    document.documentElement.style.setProperty('--tile-border-color', s.tileBorderColor || 'transparent')
+    document.documentElement.style.setProperty('--tile-border-w', (parseInt(s.tileBorderWidth, 10) || 1) + 'px')
   }
 
   /* ---------------- sidebar resize ---------------- */

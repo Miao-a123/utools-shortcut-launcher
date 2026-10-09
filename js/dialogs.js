@@ -8,9 +8,19 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.3.0'
+  const VERSION = '1.4.0'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.4.0',
+      date: '2026-10-09',
+      items: [
+        '改进：文件夹内图标大小改为只由设置决定，不再随文件夹尺寸变化 —— 不同尺寸的文件夹里图标现在大小一致；设置面板可切换 小 / 中 / 大 / 与主格一致',
+        '新增：光标位于大文件夹内时可用滚轮滚动浏览未显示完的图标（内容超出时出现细滚动条）',
+        '新增：点击大文件夹的标题栏即可打开文件夹，浏览全部图标',
+        '新增：图标格子支持背景颜色与描边（颜色 + 粗细可分别设置）'
+      ]
+    },
     {
       v: '1.3.0',
       date: '2026-10-09',
@@ -1491,6 +1501,31 @@
     })
   }
 
+  const COLOR_PRESETS = ['#534AB7', '#185FA5', '#0F6E56', '#993C1D', '#993556', '#3B6D11', '#854F0B', '#5F5E5A', '#BA7517', '#444441']
+
+  // 颜色行控件：无 / 预设色块 / 自定义取色器
+  function colorRow (current, onPick) {
+    const row = el('div', 'chips color-row')
+    const none = el('div', 'chip' + (!current ? ' on' : ''), '无')
+    none.addEventListener('click', () => onPick(''))
+    row.appendChild(none)
+    COLOR_PRESETS.forEach(c => {
+      const chip = el('div', 'chip swatch' + (current === c ? ' on' : ''))
+      chip.style.background = c
+      chip.title = c
+      chip.addEventListener('click', () => onPick(c))
+      row.appendChild(chip)
+    })
+    const custom = el('input')
+    custom.type = 'color'
+    custom.className = 'color-input'
+    custom.value = current || '#534AB7'
+    custom.title = '自定义颜色'
+    custom.addEventListener('input', () => onPick(custom.value))
+    row.appendChild(custom)
+    return row
+  }
+
   function settings () {
     const s = store.settings
     const body = el('div')
@@ -1565,6 +1600,39 @@
       document.documentElement.style.setProperty('--tile-radius', radiusRange.value + 'px')
     })
     body.appendChild(field('图标圆角', radiusRow))
+
+    const folderSizeSeg = segmented([
+      { value: 'small', label: '小' },
+      { value: 'medium', label: '中' },
+      { value: 'large', label: '大' },
+      { value: 'same', label: '与主格一致' }
+    ], s.folderIconSize || 'medium', v => {
+      store.setSetting('folderIconSize', v)
+      KL.grid.render()
+    })
+    body.appendChild(field('文件夹内图标大小', folderSizeSeg, '只影响大文件夹内部图标的显示大小，与文件夹本身尺寸无关'))
+
+    const bgRow = colorRow(s.tileBgColor, v => {
+      store.setSetting('tileBgColor', v)
+      document.documentElement.style.setProperty('--tile-bg', v || 'transparent')
+    })
+    body.appendChild(field('图标格子背景', bgRow, '留空为透明'))
+
+    const borderWrap = el('div')
+    borderWrap.appendChild(colorRow(s.tileBorderColor, v => {
+      store.setSetting('tileBorderColor', v)
+      document.documentElement.style.setProperty('--tile-border-color', v || 'transparent')
+    }))
+    borderWrap.appendChild(el('div', '', '<div style="height:6px"></div>'))
+    borderWrap.appendChild(segmented([
+      { value: 1, label: '1px' },
+      { value: 2, label: '2px' },
+      { value: 3, label: '3px' }
+    ], parseInt(s.tileBorderWidth, 10) || 1, v => {
+      store.setSetting('tileBorderWidth', v)
+      document.documentElement.style.setProperty('--tile-border-w', v + 'px')
+    }))
+    body.appendChild(field('图标格子描边', borderWrap, '先选颜色再选粗细；留空即无描边'))
 
     const themeSeg = segmented([
       { value: 'auto', label: '跟随 uTools' },
