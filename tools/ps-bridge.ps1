@@ -202,18 +202,10 @@ function Invoke-KlResolve {
           $row.args = [string]$lnk.Arguments
           $row.workDir = [string]$lnk.WorkingDirectory
           $row.description = [string]$lnk.Description
-          # IconLocation is "path,index" -- split it so the JS side gets a real
-          # file path (otherwise exists() checks on "x.exe,0" always fail)
-          $il = [string]$lnk.IconLocation
-          $row.iconLocation = ''
-          $row.iconIndex = 0
-          if ($il) {
-            $mIl = [regex]::Match($il, '^(.*?)(?:,\s*(-?\d+))?\s*$')
-            if ($mIl.Success) {
-              $row.iconLocation = $mIl.Groups[1].Value.Trim().Trim('"')
-              if ($mIl.Groups[2].Success) { $row.iconIndex = [int]$mIl.Groups[2].Value }
-            }
-          }
+          # Return IconLocation as-is ("C:\x\a.exe,3" / ",0" / empty). The JS side
+          # splits path and index via parseIconLocation; a missing index means -1
+          # (let the shell pick the default icon) -- never default it to 0.
+          $row.iconLocation = [string]$lnk.IconLocation
           if ($tp -and $tp -match '^[a-zA-Z][a-zA-Z0-9+.\-]*://') {
             # target itself is a URL (custom protocol shortcut)
             $row.target = $tp

@@ -261,16 +261,19 @@
     return { kind: 'file', path: target }
   }
 
-  // 解析图标位置字符串（兼容旧数据里 "C:\x\y.exe,0" / ",0" 这类带索引的写法）
-  function parseIconLocation (raw, fallbackIndex) {
+  // 解析图标位置字符串（"C:\x\y.exe,3" / "x.exe" / ",0" / ""）
+  // 索引只在字符串里显式出现时才采用；否则返回 -1 表示"由系统自动检测"。
+  // 注意：绝不能默认成 0 —— 索引 0 是系统图标列表的首项（空白文档图标）。
+  function parseIconLocation (raw) {
     let p = String(raw == null ? '' : raw).trim()
-    let idx = fallbackIndex == null ? -1 : fallbackIndex
-    if (!p) return { path: '', index: idx }
+    if (!p) return { path: '', index: -1 }
+    let idx = -1
     const m = /^(.*?)(?:,\s*(-?\d+))?\s*$/.exec(p)
     if (m) {
-      if (m[2] != null && (idx == null || idx < 0)) idx = parseInt(m[2], 10)
+      if (m[2] != null) idx = parseInt(m[2], 10)
       p = String(m[1] || '').trim().replace(/^"(.*)"$/, '$1')
     }
+    if (!p) return { path: '', index: -1 }
     return { path: p, index: idx }
   }
 
@@ -289,16 +292,17 @@
     }
     // 本地文件 / 快捷方式 / UWP
     const l = (sc && sc.launch) || {}
-    const loc = parseIconLocation(sc.iconLocation, sc.iconIndex)
+    const alt = sc.originalPath || (l.kind === 'file' ? l.target : '')
+    const loc = parseIconLocation(sc.iconLocation)
     let iconPath = loc.path
-    if (!iconPath) iconPath = sc.originalPath || (l.kind === 'file' ? l.target : '')
+    let iconIndex = loc.index
+    if (!iconPath) { iconPath = alt; iconIndex = -1 }
     // 指定图标路径不可用时，回退到原始快捷方式文件 / 目标
     if (iconPath && !S.exists(iconPath)) {
-      const alt = sc.originalPath || (l.kind === 'file' ? l.target : '')
-      if (alt && S.exists(alt)) { iconPath = alt; loc.index = -1 }
+      if (alt && S.exists(alt)) { iconPath = alt; iconIndex = -1 }
     }
     if (!iconPath || !S.exists(iconPath)) return null
-    const res = await S.extractIcons([{ path: iconPath, iconPath: iconPath, iconIndex: loc.index }])
+    const res = await S.extractIcons([{ path: iconPath, iconPath: iconPath, iconIndex: iconIndex }])
     if (!res || !res.ok || !res.items || !res.items.length) return null
     const it = res.items[0]
     if (!it || !it.ok || !it.png) return null

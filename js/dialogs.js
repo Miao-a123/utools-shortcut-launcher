@@ -8,9 +8,16 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.2.0'
+  const VERSION = '1.2.1'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.2.1',
+      date: '2026-10-09',
+      items: [
+        '修复：重建图标后全部变成空白图标。根因是图标索引默认取了 0 —— 而索引 0 恰好是系统图标列表里的占位图标，导致所有应用取到同一个空白图。现改为：仅当快捷方式显式指定索引时才使用，否则交给系统自动识别'
+      ]
+    },
     {
       v: '1.2.0',
       date: '2026-10-09',
@@ -571,6 +578,7 @@
     store.batch(() => {
       for (const r of rows) {
         if (!r || !r.ok) { skipped++; continue }
+        const il = KL.icons.parseIconLocation(r.iconLocation)
         let name = stripExt(basename(r.path))
         if (r.kind === 'file' && !/\.(lnk|url|appref-ms)$/i.test(r.path) && !/\.exe$/i.test(r.path)) name = basename(r.path)
         const launch = r.kind === 'url'
@@ -583,27 +591,25 @@
           launch: launch,
           originalPath: r.path,
           iconLocation: r.iconLocation || '',
-          iconIndex: r.iconIndex == null ? 0 : r.iconIndex,
           categoryId: catId,
           icon: { type: 'auto' },
           source: o.source || 'manual'
         })
         sc.iconLocation = r.iconLocation || ''
-        sc.iconIndex = r.iconIndex == null ? 0 : r.iconIndex
         added.push(sc)
         names.push(sc.name)
         if (r.kind === 'url') {
           const job = { id: sc.id, url: r.target }
           // 带本地图标位置时作为兜底（如微信小程序快捷方式：favicon 取不到则用本地图标）
-          if (r.iconLocation && /\.(exe|dll|ico)$/i.test(r.iconLocation)) {
-            job.iconPath = r.iconLocation
-            job.iconIndex = r.iconIndex
+          if (il.path && /\.(exe|dll|ico)$/i.test(il.path)) {
+            job.iconPath = il.path
+            if (il.index >= 0) job.iconIndex = il.index
           }
           iconJobs.push(job)
-        } else if (r.iconLocation && /\.(exe|dll|ico)$/i.test(r.iconLocation)) {
-          iconJobs.push({ id: sc.id, path: r.iconLocation, iconPath: r.iconLocation, iconIndex: r.iconIndex })
+        } else if (il.path && /\.(exe|dll|ico)$/i.test(il.path)) {
+          iconJobs.push({ id: sc.id, path: il.path, iconPath: il.path, iconIndex: il.index })
         } else {
-          iconJobs.push({ id: sc.id, path: r.path, iconPath: r.path, iconIndex: -1 })
+          iconJobs.push({ id: sc.id, path: r.path, iconPath: r.path })
         }
       }
     })

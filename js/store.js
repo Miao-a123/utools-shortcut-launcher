@@ -64,7 +64,7 @@
       icon: s.icon && typeof s.icon === 'object' ? s.icon : { type: 'auto' },
       originalPath: s.originalPath || '',
       iconLocation: s.iconLocation || '',
-      iconIndex: s.iconIndex == null ? 0 : s.iconIndex,
+      iconIndex: s.iconIndex == null ? -1 : s.iconIndex,
       source: s.source || '',
       note: s.note || '',
       createdAt: s.createdAt || now,
