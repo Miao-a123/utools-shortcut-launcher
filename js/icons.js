@@ -277,40 +277,64 @@
     return { path: p, index: idx }
   }
 
-  async function extractOne (sc) {
-    const src = iconSourceOf(sc)
-    if (!src) return null
-    if (src.kind === 'url') {
-      const r = await S.fetchFavicon(src.url, { service: KL.store.settings.faviconService })
-      if (!r || !r.ok) return null
-      return normalize(r.dataUrl, 128)
-    }
-    if (src.kind === 'imageFile') {
-      const r = S.readImageAsDataUrl(src.path)
-      if (!r || !r.ok) return null
-      return normalize(r.dataUrl, 128)
-    }
-    // 本地文件 / 快捷方式 / UWP
-    const l = (sc && sc.launch) || {}
-    const alt = sc.originalPath || (l.kind === 'file' ? l.target : '')
-    const loc = parseIconLocation(sc.iconLocation)
-    let iconPath = loc.path
-    let iconIndex = loc.index
-    if (!iconPath) { iconPath = alt; iconIndex = -1 }
-    // 指定图标路径不可用时，回退到原始快捷方式文件 / 目标
-    if (iconPath && !S.exists(iconPath)) {
-      if (alt && S.exists(alt)) { iconPath = alt; iconIndex = -1 }
-    }
-    if (!iconPath || !S.exists(iconPath)) return null
-    const res = await S.extractIcons([{ path: iconPath, iconPath: iconPath, iconIndex: iconIndex }])
+  // 从某个路径提取图标。
+  // 索引一律传 -1（交给系统自动识别）—— 关键：
+  // 快捷方式里的 IconLocation "xxx.exe,0" 中的 0 是该 exe 的图标资源序号，
+  // 与 SHGetImageList 的 shell 图标索引完全不是一回事；误把它当索引传下去
+  // 会命中索引 0（即系统图标列表里的"空白文件"占位图）。
+  // 而 .lnk 交给 SHGetFileInfo 解析时，Shell 会自动应用它自己的 IconLocation。
+  async function extractFromPath (p) {
+    const res = await S.extractIcons([{ path: p, iconPath: p, iconIndex: -1 }])
     if (!res || !res.ok || !res.items || !res.items.length) return null
     const it = res.items[0]
     if (!it || !it.ok || !it.png) return null
     return normalize(base64ToDataUrl(it.png, 'image/png'), 128)
   }
 
+  async function extractOne (sc) {
+    const src = iconSourceOf(sc)
+    if (!src) return null
+    const l = (sc && sc.launch) || {}
+
+    if (src.kind === 'imageFile') {
+      const r = S.readImageAsDataUrl(src.path)
+      if (!r || !r.ok) return null
+      return normalize(r.dataUrl, 128)
+    }
+
+    if (src.kind === 'url') {
+      const r = await S.fetchFavicon(src.url, { service: KL.store.settings.faviconService })
+      if (r && r.ok) {
+        const d = await normalize(r.dataUrl, 128)
+        if (d) return d
+      }
+      // 网址图标抓不到时回退本地图标（Steam 游戏的 .ico、网站快捷方式的 IconFile）
+      const favLoc = parseIconLocation(sc.iconLocation)
+      if (favLoc.path && S.exists(favLoc.path)) {
+        const d = await extractFromPath(favLoc.path)
+        if (d) return d
+      }
+      return null
+    }
+
+    // 本地文件 / 快捷方式 / 文件夹 / UWP：
+    // 优先用原始文件本身（.lnk 由 Shell 解析出它指定的图标），其次独立图标文件，最后目标
+    const op = sc.originalPath || ''
+    const loc = parseIconLocation(sc.iconLocation)
+    const cands = []
+    if (op) cands.push(op)
+    if (loc.path && loc.path !== op) cands.push(loc.path)
+    if (l.kind === 'file' && l.target && l.target !== op) cands.push(l.target)
+    for (const p of cands) {
+      if (!p || !S.exists(p)) continue
+      const d = await extractFromPath(p)
+      if (d) return d
+    }
+    return null
+  }
+
   async function extractBatch (items) {
-    // items: [{ path, iconPath, iconIndex, imageFile }]  -> returns array aligned with input
+    // items: [{ path, iconPath, imageFile }]  -> returns array aligned with input
     const out = items.map(() => null)
     const jobs = []
     items.forEach((it, i) => {
@@ -318,14 +342,18 @@
         const r = S.readImageAsDataUrl(it.imageFile)
         out[i] = r && r.ok ? r.dataUrl : null
       } else if (it && it.path) {
-        jobs.push({ i: i, path: it.path, iconPath: it.iconPath || it.path, iconIndex: it.iconIndex == null ? -1 : it.iconIndex })
+        const p = it.iconPath || it.path
+        // 路径不存在就跳过：否则系统会返回"未知文件"占位图标，被当成真图标存下来
+        if (!p || !S.exists(p)) return
+        jobs.push({ i: i, path: p, iconPath: p })
       }
     })
     if (!jobs.length) return out
     const chunkSize = 25
     for (let c = 0; c < jobs.length; c += chunkSize) {
       const chunk = jobs.slice(c, c + chunkSize)
-      const res = await S.extractIcons(chunk.map(j => ({ path: j.path, iconPath: j.iconPath, iconIndex: j.iconIndex })))
+      // 索引固定 -1，由系统自动识别（见 extractFromPath 的说明）
+      const res = await S.extractIcons(chunk.map(j => ({ path: j.path, iconPath: j.iconPath, iconIndex: -1 })))
       if (res && res.ok && res.items) {
         res.items.forEach((r, k) => {
           const job = chunk[k]

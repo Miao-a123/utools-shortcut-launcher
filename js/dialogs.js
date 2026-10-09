@@ -8,9 +8,18 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.2.1'
+  const VERSION = '1.2.2'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.2.2',
+      date: '2026-10-09',
+      items: [
+        '修复：大量图标仍是空白。根因是误把快捷方式里的图标位置索引当成了系统图标索引（"xxx.exe,0" 中的 0 是该程序的第几个图标资源，与系统图标列表无关），于是命中列表首项——空白占位图。现改为直接用快捷方式文件本身提取、索引交给系统自动识别',
+        '修复：网址类快捷方式（如 Steam 游戏）抓不到网站图标时，回退使用本地图标文件',
+        '修复：导入时若图标路径不存在则不再写入"未知文件"占位图'
+      ]
+    },
     {
       v: '1.2.1',
       date: '2026-10-09',
@@ -600,15 +609,12 @@
         names.push(sc.name)
         if (r.kind === 'url') {
           const job = { id: sc.id, url: r.target }
-          // 带本地图标位置时作为兜底（如微信小程序快捷方式：favicon 取不到则用本地图标）
-          if (il.path && /\.(exe|dll|ico)$/i.test(il.path)) {
-            job.iconPath = il.path
-            if (il.index >= 0) job.iconIndex = il.index
-          }
+          // 仅当 IconFile 是独立图片时才作为 favicon 的兜底（Steam 的 .ico、微信小程序等）
+          if (il.path && /\.(ico|png)$/i.test(il.path)) job.iconPath = il.path
           iconJobs.push(job)
-        } else if (il.path && /\.(exe|dll|ico)$/i.test(il.path)) {
-          iconJobs.push({ id: sc.id, path: il.path, iconPath: il.path, iconIndex: il.index })
         } else {
+          // 一律用原始文件本身提取（.lnk 交给 Shell 解析它自己指定的图标）。
+          // 切勿使用 IconLocation 的 "路径,索引"：那个索引与 shell 图标索引无关。
           iconJobs.push({ id: sc.id, path: r.path, iconPath: r.path })
         }
       }
@@ -629,7 +635,7 @@
       else local.push(j)
     }
     if (local.length) {
-      KL.icons.extractBatch(local.map(j => ({ path: j.path, iconPath: j.iconPath, iconIndex: j.iconIndex }))).then(results => {
+      KL.icons.extractBatch(local.map(j => ({ path: j.path, iconPath: j.iconPath }))).then(results => {
         results.forEach((data, i) => {
           const job = local[i]
           if (!data || !job) return
@@ -654,7 +660,7 @@
         KL.icons.extractOne(sc).then(async data => {
           // 网址图标抓取失败时，回退到本地图标（如 .lnk 带的 IconLocation）
           if (!data && job.iconPath && S.exists(job.iconPath)) {
-            const res = await KL.icons.extractBatch([{ path: job.iconPath, iconPath: job.iconPath, iconIndex: job.iconIndex }])
+            const res = await KL.icons.extractBatch([{ path: job.iconPath, iconPath: job.iconPath }])
             if (res && res[0]) data = await KL.icons.normalize(res[0], 128)
           }
           if (data) {
@@ -987,7 +993,7 @@
       }
     }
     if (localJobs.length) {
-      KL.icons.extractBatch(localJobs.map(j => ({ path: j.path, iconPath: j.iconPath, iconIndex: j.iconIndex }))).then(results => {
+      KL.icons.extractBatch(localJobs.map(j => ({ path: j.path, iconPath: j.iconPath }))).then(results => {
         results.forEach((d, i) => {
           const job = localJobs[i]
           if (!d || !job) return
