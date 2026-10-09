@@ -269,6 +269,9 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   max-width: 100%;
   font-size: 11.5px;
   line-height: 1.25;
+  /* 固定占两行高度：否则一行/两行名称的内容总高不同，
+     在 justify-content:center 下会把图标推到不同位置，造成图标不对齐 */
+  min-height: 2.5em;
   text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;

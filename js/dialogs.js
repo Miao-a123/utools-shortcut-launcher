@@ -8,9 +8,16 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.2.2'
+  const VERSION = '1.2.3'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.2.3',
+      date: '2026-10-09',
+      items: [
+        '修复：一行/两行名称混排时图标上下不对齐（文字区域改为固定保留两行高度，各格子内容高度一致，图标位置随之统一）'
+      ]
+    },
     {
       v: '1.2.2',
       date: '2026-10-09',
