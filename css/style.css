@@ -185,6 +185,22 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
 .cat:hover .cat-more { display: block; }
 .cat .cat-more:hover { background: var(--border-strong); }
 
+.side-foot {
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.side-btn {
+  display: flex; align-items: center; gap: 8px;
+  height: 32px; padding: 0 8px;
+  border-radius: 9px; border: 1px solid transparent;
+  color: var(--text-2); font-size: 12.5px;
+  cursor: pointer;
+}
+.side-btn:hover { background: var(--hover); color: var(--text); }
+.side-btn svg { flex: 0 0 auto; }
+
 .content { flex: 1 1 auto; min-width: 0; position: relative; overflow-y: auto; padding: 14px; }
 
 /* ---------------- grid ---------------- */

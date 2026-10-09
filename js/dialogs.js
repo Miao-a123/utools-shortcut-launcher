@@ -8,6 +8,33 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
+  const VERSION = '1.1.0'
+  const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
+  const CHANGELOG = [
+    {
+      v: '1.1.0',
+      date: '2026-10-09',
+      items: [
+        '修复：右键菜单/确认框"删除"无效（确认弹窗返回值竞态）',
+        '修复：Chrome 等浏览器"创建网站快捷方式"拖入失败（识别为网址快捷方式）',
+        '修复：URL 目标快捷方式（如微信小程序 weixin://）打开报"目标为空"',
+        '修复：图标视觉大小不一（裁掉透明边并铺满画布，可在设置里一键重建）',
+        '新增：侧边栏底部设置入口；设置面板新增版本号与更新日志'
+      ]
+    },
+    {
+      v: '1.0.0',
+      date: '2026-10-08',
+      items: [
+        '拖拽文件/文件夹/网址创建快捷方式，.lnk/.url 自动解析目标',
+        '系统图标高清提取（256px）、网址图标自动抓取',
+        '侧边栏分类管理、宫格自由尺寸（1×1~4×4）、拖拽排序与归类',
+        '一键扫描本机应用（含 UWP）、批量导入浏览器收藏夹',
+        '搜索、多选批量操作、数据导入导出、深浅色主题跟随'
+      ]
+    }
+  ]
+
   function basename (p) {
     const parts = String(p || '').split(/[\\/]/)
     return parts[parts.length - 1] || p
@@ -552,8 +579,12 @@
         sc.iconLocation = r.iconLocation || ''
         added.push(sc)
         names.push(sc.name)
-        if (r.kind === 'url') iconJobs.push({ id: sc.id, url: r.target })
-        else if (r.iconLocation && /\.(exe|dll|ico)$/i.test(r.iconLocation)) {
+        if (r.kind === 'url') {
+          const job = { id: sc.id, url: r.target }
+          // 带本地图标位置时作为兜底（如微信小程序快捷方式：favicon 取不到则用本地图标）
+          if (r.iconLocation && /\.(exe|dll|ico)$/i.test(r.iconLocation)) job.iconPath = r.iconLocation
+          iconJobs.push(job)
+        } else if (r.iconLocation && /\.(exe|dll|ico)$/i.test(r.iconLocation)) {
           iconJobs.push({ id: sc.id, path: r.iconLocation, iconPath: r.iconLocation })
         } else {
           iconJobs.push({ id: sc.id, path: r.path, iconPath: r.path })
@@ -598,7 +629,12 @@
         const job = remote[index++]
         const sc = store.getShortcut(job.id)
         if (!sc) { next(); return }
-        KL.icons.extractOne(sc).then(data => {
+        KL.icons.extractOne(sc).then(async data => {
+          // 网址图标抓取失败时，回退到本地图标（如 .lnk 带的 IconLocation）
+          if (!data && job.iconPath && S.exists(job.iconPath)) {
+            const res = await KL.icons.extractBatch([{ path: job.iconPath, iconPath: job.iconPath }])
+            if (res && res[0]) data = await KL.icons.normalize(res[0], 128)
+          }
           if (data) {
             store.updateShortcut(job.id, { icon: { type: 'auto', data: data } }, { silent: true })
             KL.grid.refreshTile(job.id)
@@ -1241,6 +1277,50 @@
    * 设置
    * ================================================================== */
 
+  /* ==================================================================
+   * 图标重建 / 更新日志
+   * ================================================================== */
+
+  async function rebuildAllIcons () {
+    const autoList = store.shortcuts.filter(sc => {
+      const t = (sc.icon && sc.icon.type) || 'auto'
+      return t !== 'text' && t !== 'glyph'
+    })
+    if (!autoList.length) { toast('没有可重建的图标'); return }
+    const ok = await KL.ui.confirm({
+      title: '重建全部图标',
+      text: '将用当前规则重新提取 ' + autoList.length + ' 个快捷方式的图标（文字图标与字形图标会保留）。大约需要几秒到几十秒。',
+      okText: '开始重建'
+    })
+    if (!ok) return
+    let n = 0
+    KL.ui.progress(0, autoList.length)
+    await KL.icons.ensureMany(autoList, 3, () => { n++; KL.ui.progress(n, autoList.length) })
+    KL.grid.render()
+    toast('已重建 ' + n + ' 个图标')
+  }
+
+  function showChangelog () {
+    const html = CHANGELOG.map(c =>
+      '<div style="margin-bottom:16px">' +
+      '<div style="font-weight:600;margin-bottom:6px">v' + esc(c.v) +
+      ' <span style="color:var(--text-3);font-weight:400;font-size:11.5px">' + esc(c.date) + '</span></div>' +
+      '<ul style="margin:0;padding-left:18px;line-height:1.8">' +
+      c.items.map(i => '<li>' + esc(i) + '</li>').join('') + '</ul></div>'
+    ).join('')
+    KL.ui.modal({
+      title: '更新日志',
+      size: 'narrow',
+      body: '<div style="max-height:52vh;overflow:auto">' + html + '</div>',
+      buttons: function (foot, m) {
+        const b = el('button', 'btn primary', '关闭')
+        b.addEventListener('click', () => m.close())
+        foot.appendChild(el('div', 'grow'))
+        foot.appendChild(b)
+      }
+    })
+  }
+
   function settings () {
     const s = store.settings
     const body = el('div')
@@ -1330,6 +1410,12 @@
     body.appendChild(field('第三方图标服务（可选）', svcInput, '当网站自身图标抓不到时的兜底。可用变量：{domain} 域名、{origin} 源、{url} 完整网址。留空则只用网站自身的图标'))
 
     body.appendChild(el('div', '', '<div style="height:6px"></div>'))
+    const iconRow = el('div', 'chips')
+    const rebuildBtn = el('div', 'chip', '重建全部图标')
+    rebuildBtn.addEventListener('click', () => rebuildAllIcons())
+    iconRow.appendChild(rebuildBtn)
+    body.appendChild(field('图标', iconRow, '按当前规则重新提取全部图标，可修正因图标来源不同导致的大小不一'))
+
     const dataRow = el('div', 'chips')
     const openBtn = el('div', 'chip', '打开数据目录')
     openBtn.addEventListener('click', () => S.openDataDir())
@@ -1385,6 +1471,16 @@
     dangerRow.appendChild(resetBtn)
     dangerRow.appendChild(logBtn)
     body.appendChild(field('其他', dangerRow))
+
+    body.appendChild(el('div', '', '<div style="height:6px"></div>'))
+    const aboutRow = el('div', 'chips')
+    const logChip = el('div', 'chip', '更新日志')
+    logChip.addEventListener('click', () => showChangelog())
+    const repoChip = el('div', 'chip', 'GitHub 仓库')
+    repoChip.addEventListener('click', () => S.launch({ launch: { kind: 'url', target: REPO_URL } }))
+    aboutRow.appendChild(logChip)
+    aboutRow.appendChild(repoChip)
+    body.appendChild(field('关于', aboutRow, '快捷方式面板 v' + VERSION + ' · by imo'))
 
     KL.ui.modal({
       title: '设置',

@@ -477,16 +477,110 @@ function splitArgs (str) {
   return out
 }
 
+/* ------------------------------------------------------------------ *
+ * URL / 快捷方式解析辅助
+ * ------------------------------------------------------------------ */
+
+// 浏览器可执行文件名（Chrome 等创建的"网站快捷方式"目标是指向它们的 exe）
+const BROWSER_EXE_RE = /(chrome|chrome_proxy|msedge|msedge_proxy|firefox|brave|vivaldi|opera|launcher|chromium|360se|360se6|360chrome|qqbrowser|sogouexplorer|iexplore)\.exe$/i
+
+function firstUrlIn (s) {
+  const m = /https?:\/\/[^\s"'<>]+/i.exec(String(s || ''))
+  return m ? m[0] : null
+}
+
+// 从 .lnk 原始字节中提取内嵌 URL（URL 目标的快捷方式 TargetPath 为空）
+function lnkEmbeddedUrl (p) {
+  try {
+    const buf = fs.readFileSync(p)
+    if (!buf.length || buf.length > 4 * 1024 * 1024) return null
+    let m = /[a-zA-Z][a-zA-Z0-9+.\-]{1,24}:\/\/[^\u0000-\u001F"'<>|]{2,2048}/.exec(buf.toString('utf16le'))
+    if (m) return m[0]
+    m = /[a-zA-Z][a-zA-Z0-9+.\-]{1,24}:\/\/[^\u0000-\u001F"'<>|\s]{2,2048}/.exec(buf.toString('latin1'))
+    return m ? m[0] : null
+  } catch (e) {
+    return null
+  }
+}
+
+// .url 文件解码（编码可能为 UTF-16LE/BE、UTF-8、GBK）
+function decodeUrlFileBuffer (buf) {
+  try {
+    if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) return buf.toString('utf16le', 2)
+    if (buf.length >= 2 && buf[0] === 0xFE && buf[1] === 0xFF) {
+      const sw = Buffer.from(buf)
+      sw.swap16()
+      return sw.toString('utf16le', 2)
+    }
+    let zeros = 0
+    const step = Math.min(64, buf.length)
+    for (let i = 1; i < step; i += 2) if (buf[i] === 0) zeros++
+    if (step >= 16 && zeros >= (step / 2) * 0.8) return buf.toString('utf16le')
+    const utf8 = buf.toString('utf8')
+    if (utf8.indexOf('\uFFFD') >= 0) {
+      try { return new TextDecoder('gbk').decode(buf) } catch (e) { return utf8 }
+    }
+    return utf8
+  } catch (e) {
+    try { return buf.toString('utf8') } catch (e2) { return '' }
+  }
+}
+
+function parseUrlFileRaw (p) {
+  try {
+    const buf = fs.readFileSync(p)
+    if (!buf.length || buf.length > 1024 * 1024) return null
+    const txt = decodeUrlFileBuffer(buf)
+    const m = /^\s*URL\s*=\s*(.+)\s*$/im.exec(txt)
+    if (!m) return null
+    const out = { target: m[1].trim() }
+    const im = /^\s*IconFile\s*=\s*(.+)\s*$/im.exec(txt)
+    if (im) out.iconLocation = im[1].trim()
+    return out
+  } catch (e) {
+    return null
+  }
+}
+
+// 用系统 shell 打开（支持 http(s) 与自定义协议）
+function openExternalViaShell (target) {
+  try {
+    if (utools.shellOpenExternal(target) !== false) return true
+  } catch (e) {
+    log('shellOpenExternal failed', target, e.message)
+  }
+  try {
+    const child = cp.spawn('cmd.exe', ['/c', 'start', '', target], { detached: true, stdio: 'ignore', windowsHide: true })
+    child.on('error', e => log('start fallback failed', e.message))
+    child.unref()
+    return true
+  } catch (e) {
+    return false
+  }
+}
+
 function launch (sc) {
   return new Promise(resolve => {
     try {
       const l = (sc && sc.launch) || {}
       const kind = l.kind || 'path'
-      const target = l.target
-      if (!target) return resolve({ ok: false, error: '目标为空' })
-      if (kind === 'url') {
-        utools.shellOpenExternal(target)
-        return resolve({ ok: true })
+      let target = l.target
+      // 兜底：目标为空但原始快捷方式文件还在，现场重新解析一次
+      if (!target && sc && sc.originalPath) {
+        const op = String(sc.originalPath)
+        if (/\.url$/i.test(op)) {
+          const parsed = parseUrlFileRaw(op)
+          if (parsed && parsed.target) target = parsed.target
+        } else if (/\.lnk$/i.test(op)) {
+          const u = lnkEmbeddedUrl(op)
+          if (u) target = u
+        }
+      }
+      if (!target) return resolve({ ok: false, error: '目标为空（快捷方式可能已失效）' })
+      const urlLike = kind === 'url' || /^[a-zA-Z][a-zA-Z0-9+.\-]*:\/\//.test(String(target))
+      if (urlLike) {
+        if (openExternalViaShell(target)) return resolve({ ok: true })
+        return resolve({ ok: false, error: '无法打开该链接' })
       }
       if (kind === 'appid') {
         const child = cp.spawn('explorer.exe', ['shell:AppsFolder\\' + (l.appId || target.replace(/^shell:AppsFolder\\/i, ''))], {
@@ -565,8 +659,38 @@ const services = {
     if (!list.length) return { ok: true, items: [] }
     const out = []
     for (let i = 0; i < list.length; i += 40) {
-      const r = await callPS('resolve', { paths: list.slice(i, i + 40) }, 120000)
-      if (r && r.ok && r.data) out.push.apply(out, toArray(r.data.items))
+      const chunk = list.slice(i, i + 40)
+      const r = await callPS('resolve', { paths: chunk }, 120000)
+      const items = (r && r.ok && r.data) ? toArray(r.data.items) : []
+      for (let k = 0; k < items.length; k++) {
+        const p = String(chunk[k] || '')
+        let it = items[k]
+        if (!it) { continue }
+        // .url 解析失败 → Node 侧重读（多编码兜底）
+        if (/\.url$/i.test(p) && !it.ok) {
+          const parsed = parseUrlFileRaw(p)
+          if (parsed && parsed.target) {
+            items[k] = { path: p, ok: true, kind: 'url', target: parsed.target, iconLocation: parsed.iconLocation || '' }
+          }
+          continue
+        }
+        // .lnk 未解析出目标 → 从字节里提取内嵌 URL（URL 目标快捷方式）
+        if (/\.lnk$/i.test(p) && !it.target) {
+          const u = lnkEmbeddedUrl(p)
+          if (u) { items[k] = Object.assign({}, it, { ok: true, kind: 'url', target: u }); continue }
+        }
+        // 目标本身是 URL（含自定义协议）→ 按网址处理
+        if (it.target && /^[a-zA-Z][a-zA-Z0-9+.\-]*:\/\//.test(String(it.target))) {
+          items[k] = Object.assign({}, it, { ok: true, kind: 'url' })
+          continue
+        }
+        // 浏览器 exe + URL 参数（Chrome/Edge 等"创建快捷方式"的产物）→ 视为网址
+        if (it.target && BROWSER_EXE_RE.test(String(it.target))) {
+          const u = firstUrlIn(it.args)
+          if (u) items[k] = Object.assign({}, it, { ok: true, kind: 'url', target: u, args: '', workDir: '' })
+        }
+      }
+      out.push.apply(out, items)
     }
     return { ok: true, items: out }
   },

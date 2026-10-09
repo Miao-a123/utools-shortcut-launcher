@@ -166,6 +166,23 @@ function ConvertFrom-TextSmart {
   return $utf8
 }
 
+function Get-LnkEmbeddedUrl {
+  # URL-targeted .lnk files (e.g. weixin://launchapplet/?app_id=...) expose an empty
+  # TargetPath via WScript.Shell, so recover the URL from the raw shortcut bytes.
+  param([string]$Path)
+  try {
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -lt 16 -or $bytes.Length -gt 4194304) { return $null }
+    $u = [Text.Encoding]::Unicode.GetString($bytes)
+    $m = [regex]::Match($u, '([a-zA-Z][a-zA-Z0-9+.\-]{1,24}://[^\x00-\x1F"<>|]{2,2048})')
+    if ($m.Success) { return $m.Groups[1].Value }
+    $a = [Text.Encoding]::GetEncoding(1252).GetString($bytes)
+    $m2 = [regex]::Match($a, '([a-zA-Z][a-zA-Z0-9+.\-]{1,24}://[^\x00-\x1F"<>|\s]{2,2048})')
+    if ($m2.Success) { return $m2.Groups[1].Value }
+  } catch { }
+  return $null
+}
+
 function Invoke-KlResolve {
   param($Payload)
   $items = New-Object System.Collections.ArrayList
@@ -181,13 +198,32 @@ function Invoke-KlResolve {
         $ext = [IO.Path]::GetExtension($p).ToLower()
         if ($ext -eq '.lnk' -and $ws) {
           $lnk = $ws.CreateShortcut($p)
-          $row.target = [string]$lnk.TargetPath
+          $tp = [string]$lnk.TargetPath
           $row.args = [string]$lnk.Arguments
           $row.workDir = [string]$lnk.WorkingDirectory
           $row.iconLocation = [string]$lnk.IconLocation
           $row.description = [string]$lnk.Description
-          $row.kind = 'file'
-          $row.ok = $true
+          if ($tp -and $tp -match '^[a-zA-Z][a-zA-Z0-9+.\-]*://') {
+            # target itself is a URL (custom protocol shortcut)
+            $row.target = $tp
+            $row.kind = 'url'
+            $row.ok = $true
+          } elseif (-not $tp) {
+            # URL-targeted shortcut: WScript.Shell gives empty TargetPath, dig it out
+            $u = Get-LnkEmbeddedUrl -Path $p
+            if ($u) {
+              $row.target = $u
+              $row.kind = 'url'
+              $row.ok = $true
+            } else {
+              $row.target = ''
+              $row.error = 'no target'
+            }
+          } else {
+            $row.target = $tp
+            $row.kind = 'file'
+            $row.ok = $true
+          }
         } elseif ($ext -eq '.url') {
           $txt = ConvertFrom-TextSmart -Path $p
           $m = [regex]::Match($txt, '(?im)^\s*URL\s*=\s*(.+)$')

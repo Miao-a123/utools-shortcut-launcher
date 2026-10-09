@@ -234,21 +234,23 @@
   function confirm (opts) {
     const o = typeof opts === 'string' ? { text: opts } : (opts || {})
     return new Promise(resolve => {
-      const api = modal({
+      let settled = false
+      const finish = v => { if (!settled) { settled = true; resolve(v) } }
+      modal({
         title: o.title || '确认',
         size: 'narrow',
         body: '<div style="line-height:1.7">' + esc(o.text || '确定执行该操作吗？') + '</div>',
         maskClosable: false,
         buttons: function (foot, m) {
           const cancel = el('button', 'btn', '取消')
-          cancel.addEventListener('click', () => { m.close(); resolve(false) })
+          cancel.addEventListener('click', () => { finish(false); m.close() })
           const ok = el('button', 'btn ' + (o.danger ? 'danger' : 'primary'), esc(o.okText || '确定'))
-          ok.addEventListener('click', () => { m.close(); resolve(true) })
+          ok.addEventListener('click', () => { finish(true); m.close() })
           foot.appendChild(el('div', 'grow'))
           foot.appendChild(cancel)
           foot.appendChild(ok)
         },
-        onClose: () => resolve(false)
+        onClose: () => finish(false)
       })
     })
   }
@@ -257,6 +259,7 @@
     const o = opts || {}
     return new Promise(resolve => {
       let settled = false
+      const finish = v => { if (!settled) { settled = true; resolve(v) } }
       const wrap = el('div')
       wrap.innerHTML = '<input class="input" type="text" value="' + esc(o.value || '') + '" placeholder="' + esc(o.placeholder || '') + '">'
       const input = wrap.querySelector('input')
@@ -267,22 +270,21 @@
         maskClosable: false,
         buttons: function (foot, m) {
           const cancel = el('button', 'btn', '取消')
-          cancel.addEventListener('click', () => { m.close(); settled = true; resolve(null) })
+          cancel.addEventListener('click', () => { finish(null); m.close() })
           const ok = el('button', 'btn primary', esc(o.okText || '确定'))
-          ok.addEventListener('click', () => { m.close(); settled = true; resolve(input.value.trim()) })
+          ok.addEventListener('click', () => { finish(input.value.trim()); m.close() })
           foot.appendChild(el('div', 'grow'))
           foot.appendChild(cancel)
           foot.appendChild(ok)
         },
         onMount: () => setTimeout(() => { input.focus(); input.select() }, 30),
-        onClose: () => { if (!settled) resolve(null) }
+        onClose: () => finish(null)
       })
       input.addEventListener('keydown', e => {
         if (e.key === 'Enter') {
           e.preventDefault()
-          settled = true
+          finish(input.value.trim())
           api.close()
-          resolve(input.value.trim())
         }
       })
     })
