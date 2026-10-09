@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>快捷方式面板</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="toolbar">
+      <div class="brand">
+        <img src="logo.png" alt="">
+        <span>快捷方式</span>
+      </div>
+      <div class="search-wrap" id="searchWrap">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.4"/><path d="M10.4 10.4L14 14"/></svg>
+        <input id="search" class="search" type="text" placeholder="搜索快捷方式（Ctrl+F）" spellcheck="false">
+        <button id="searchClear" class="search-clear" title="清空">&times;</button>
+      </div>
+      <div class="tools">
+        <button id="btnAdd" class="btn primary">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
+          <span>添加</span>
+        </button>
+        <button id="btnSort" class="btn" title="排列顺序">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M4.5 8h7M6 11.5h4"/></svg>
+          <span id="sortLabel">手动</span>
+        </button>
+        <button id="btnLabels" class="btn active" title="显示 / 隐藏图标文字">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 5V3.5h11V5M8 3.5v9M6 12.5h4"/></svg>
+        </button>
+        <button id="btnSettings" class="btn icon-only" title="设置">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>
+        </button>
+      </div>
+    </header>
+    <div class="body">
+      <aside class="sidebar" id="sidebar"></aside>
+      <main class="content" id="content">
+        <div class="grid" id="grid"></div>
+        <div class="empty" id="empty">
+          <div class="big"></div>
+          <div class="small"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div class="drop-overlay" id="dropOverlay">
+    <div class="frame">
+      松手即可添加为快捷方式
+      <small>支持文件、文件夹、桌面快捷方式、网址</small>
+    </div>
+  </div>
+
+  <div class="selbar" id="selbar">
+    <span id="selCount">已选 0 项</span>
+    <button class="btn" id="selMove">移动到分类</button>
+    <button class="btn" id="selSize">图标尺寸</button>
+    <button class="btn" id="selRefresh">刷新图标</button>
+    <button class="btn danger" id="selDelete">删除</button>
+    <button class="btn ghost" id="selCancel">取消</button>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script src="js/mock.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/grid.js"></script>
+  <script src="js/dialogs.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+{
+  "pluginName": "shortcut-launcher",
+  "version": "1.0.0",
+  "description": "快捷方式面板：拖拽文件/网址快速创建图标，侧边栏分类管理，宫格自由尺寸布局，图标与名称可自定义",
+  "author": "imo",
+  "homepage": "",
+  "main": "index.html",
+  "logo": "logo.png",
+  "preload": "preload.js",
+  "features": [
+    {
+      "code": "launcher",
+      "explain": "快捷方式面板",
+      "icon": "logo.png",
+      "platform": ["win32", "darwin", "linux"],
+      "cmds": ["快捷方式", "快捷启动", "快捷面板", "launcher", "shortcut", "kl"]
+    },
+    {
+      "code": "launcher-add",
+      "explain": "添加为快捷方式",
+      "icon": "logo.png",
+      "platform": ["win32"],
+      "cmds": [
+        {
+          "type": "files",
+          "label": "添加为快捷方式",
+          "fileType": "file",
+          "match": "/.+/"
+        },
+        {
+          "type": "files",
+          "label": "添加文件夹为快捷方式",
+          "fileType": "directory",
+          "match": "/.+/"
+        }
+      ]
+    },
+    {
+      "code": "launcher-add-url",
+      "explain": "添加网址为快捷方式",
+      "icon": "logo.png",
+      "platform": ["win32"],
+      "cmds": [
+        {
+          "type": "regex",
+          "label": "添加网址为快捷方式",
+          "match": "/^https?:\\/\\//",
+          "minLength": 8
+        }
+      ]
+    }
+  ]
+}

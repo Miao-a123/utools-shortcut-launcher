@@ -1,0 +1,15 @@
+const fs = require('fs')
+const s = fs.readFileSync(process.argv[2], 'utf8')
+const count = re => (s.match(re) || []).length
+console.log('grid tiles        :', count(/class="tile[^"]*"/g))
+console.log('category items    :', count(/class="cat[^"]*"/g))
+console.log('tile imgs(data:)  :', count(/<img[^>]*class="icon"[^>]*src="data:image/g))
+console.log('resize handles    :', count(/class="resize"/g))
+console.log('missing badges    :', count(/class="badge"/g))
+console.log('sidebar counts    :', (s.match(/<span class="count">\d+<\/span>/g) || []).join(' '))
+console.log('html data-theme   :', (/<html[^>]*data-theme="(\w+)"/.exec(s) || [])[1])
+console.log('inline cell var   :', (/<html[^>]*style="([^"]*)"/.exec(s) || [])[1])
+console.log('sort label        :', (/id="sortLabel">([^<]*)</.exec(s) || [])[1])
+console.log('labels toggle on  :', /id="btnLabels" class="btn active"/.test(s))
+const err = count(/class="tile"/g)
+if (err === 0) { console.log('!! 没有渲染出任何 tile'); process.exitCode = 1 }
