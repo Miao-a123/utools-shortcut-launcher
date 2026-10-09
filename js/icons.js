@@ -143,29 +143,71 @@
     })
   }
 
+  // 扫描 alpha 通道找出非透明内容的包围盒（分析画布最大 256，开销可控）
+  function alphaBBox (img, w, h) {
+    const scaleA = Math.min(1, 256 / Math.max(w, h))
+    const aw = Math.max(1, Math.round(w * scaleA))
+    const ah = Math.max(1, Math.round(h * scaleA))
+    const ac = document.createElement('canvas')
+    ac.width = aw
+    ac.height = ah
+    const actx = ac.getContext('2d', { willReadFrequently: true })
+    try {
+      actx.drawImage(img, 0, 0, aw, ah)
+      const d = actx.getImageData(0, 0, aw, ah).data
+      let minX = aw; let minY = ah; let maxX = -1; let maxY = -1
+      for (let y = 0; y < ah; y++) {
+        const row = y * aw * 4
+        for (let x = 0; x < aw; x++) {
+          if (d[row + x * 4 + 3] > 8) {
+            if (x < minX) minX = x
+            if (x > maxX) maxX = x
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+          }
+        }
+      }
+      if (maxX < 0) return { empty: true, scaleA: scaleA }
+      return { x0: minX, y0: minY, x1: maxX + 1, y1: maxY + 1, scaleA: scaleA }
+    } catch (e) {
+      return { x0: 0, y0: 0, x1: w, y1: h, scaleA: scaleA }
+    }
+  }
+
   async function normalize (dataUrl, max) {
     if (!dataUrl) return null
     const limit = max || 128
-    if (/^data:image\/png;base64,/.test(dataUrl)) {
-      const dim = pngSize(dataUrl)
-      if (dim && dim.w <= limit && dim.h <= limit) return dataUrl
-    }
     const img = await loadImage(dataUrl)
     if (!img) return null
     let w = img.naturalWidth || img.width || limit
     let h = img.naturalHeight || img.height || limit
     if (!w || !h) { w = h = limit }
-    const scale = Math.min(1, limit / Math.max(w, h))
-    const tw = Math.max(1, Math.round(w * scale))
-    const th = Math.max(1, Math.round(h * scale))
+
+    const bb = alphaBBox(img, w, h)
+    if (bb.empty) return null
+    // 内容在原图坐标系中的包围盒
+    const sx = bb.x0 / bb.scaleA
+    const sy = bb.y0 / bb.scaleA
+    const sw = Math.max(1, (bb.x1 - bb.x0) / bb.scaleA)
+    const sh = Math.max(1, (bb.y1 - bb.y0) / bb.scaleA)
+
+    // 内容已铺满（占比 >= 92%）且整体不超过 limit：原样返回，避免无谓重编码损失
+    const coverX = sw / w
+    const coverY = sh / h
+    if (coverX >= 0.92 && coverY >= 0.92 && w <= limit && h <= limit) return dataUrl
+
+    // 裁掉透明边后等比缩放、居中铺满 limit x limit 画布，保证所有图标视觉大小统一
+    const scale = limit / Math.max(sw, sh)
+    const tw = Math.max(1, Math.round(sw * scale))
+    const th = Math.max(1, Math.round(sh * scale))
     const cv = document.createElement('canvas')
-    cv.width = tw
-    cv.height = th
+    cv.width = limit
+    cv.height = limit
     const ctx = cv.getContext('2d')
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
     try {
-      ctx.drawImage(img, 0, 0, tw, th)
+      ctx.drawImage(img, sx, sy, sw, sh, Math.round((limit - tw) / 2), Math.round((limit - th) / 2), tw, th)
     } catch (e) {
       return null
     }

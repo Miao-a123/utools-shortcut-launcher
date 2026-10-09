@@ -524,6 +524,49 @@ function launch (sc) {
 }
 
 /* ------------------------------------------------------------------ *
+ * .url 文件解析（Internet Shortcut，编码可能为 UTF-16LE/BE、UTF-8、GBK）
+ * ------------------------------------------------------------------ */
+
+function decodeUrlFileBuffer (buf) {
+  try {
+    if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) return buf.toString('utf16le', 2)
+    if (buf.length >= 2 && buf[0] === 0xFE && buf[1] === 0xFF) {
+      const sw = Buffer.from(buf)
+      sw.swap16()
+      return sw.toString('utf16le', 2)
+    }
+    // 无 BOM 的 UTF-16 启发式：头部 ASCII 区域奇数位几乎全为 0
+    let zeros = 0
+    const step = Math.min(64, buf.length)
+    for (let i = 1; i < step; i += 2) if (buf[i] === 0) zeros++
+    if (step >= 16 && zeros >= (step / 2) * 0.8) return buf.toString('utf16le')
+    const utf8 = buf.toString('utf8')
+    if (utf8.indexOf('\uFFFD') >= 0) {
+      try { return new TextDecoder('gbk').decode(buf) } catch (e) { return utf8 }
+    }
+    return utf8
+  } catch (e) {
+    try { return buf.toString('utf8') } catch (e2) { return '' }
+  }
+}
+
+function parseUrlFileRaw (p) {
+  try {
+    const buf = fs.readFileSync(p)
+    if (!buf.length || buf.length > 1024 * 1024) return null
+    const txt = decodeUrlFileBuffer(buf)
+    const m = /^\s*URL\s*=\s*(.+)\s*$/im.exec(txt)
+    if (!m) return null
+    const out = { target: m[1].trim() }
+    const im = /^\s*IconFile\s*=\s*(.+)\s*$/im.exec(txt)
+    if (im) out.iconLocation = im[1].trim()
+    return out
+  } catch (e) {
+    return null
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * Exposed API
  * ------------------------------------------------------------------ */
 
@@ -565,8 +608,25 @@ const services = {
     if (!list.length) return { ok: true, items: [] }
     const out = []
     for (let i = 0; i < list.length; i += 40) {
-      const r = await callPS('resolve', { paths: list.slice(i, i + 40) }, 120000)
-      if (r && r.ok && r.data) out.push.apply(out, toArray(r.data.items))
+      const chunk = list.slice(i, i + 40)
+      const r = await callPS('resolve', { paths: chunk }, 120000)
+      const items = (r && r.ok && r.data) ? toArray(r.data.items) : []
+      // 兜底：.url 文件解析失败（常见于 PS 侧文本编码问题）时，用 Node 直接重读解析
+      for (let k = 0; k < items.length; k++) {
+        const it = items[k]
+        const p = String(chunk[k] || '')
+        if (/\.url$/i.test(p) && (!it || !it.ok)) {
+          const parsed = parseUrlFileRaw(p)
+          if (parsed) {
+            items[k] = {
+              path: p, ok: true, kind: 'url',
+              target: parsed.target,
+              iconLocation: parsed.iconLocation || ''
+            }
+          }
+        }
+      }
+      out.push.apply(out, items)
     }
     return { ok: true, items: out }
   },
