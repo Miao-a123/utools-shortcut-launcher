@@ -159,24 +159,6 @@ function Ensure-IconTypes {
 function ConvertFrom-TextSmart {
   param([string]$Path)
   $bytes = [IO.File]::ReadAllBytes($Path)
-  # UTF-16 with BOM (browser-generated .url files are usually UTF-16LE)
-  if ($bytes.Length -ge 2) {
-    if ($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
-      try { return [Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2) } catch { }
-    }
-    if ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
-      try { return [Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2) } catch { }
-    }
-  }
-  # UTF-16 without BOM: heuristic - odd bytes almost all zero in the ASCII header region
-  if ($bytes.Length -ge 16) {
-    $step = [Math]::Min(64, $bytes.Length)
-    $zeros = 0
-    for ($i = 1; $i -lt $step; $i += 2) { if ($bytes[$i] -eq 0) { $zeros++ } }
-    if ($zeros -ge ($step / 2) * 0.8) {
-      try { return [Text.Encoding]::Unicode.GetString($bytes) } catch { }
-    }
-  }
   $utf8 = [Text.Encoding]::UTF8.GetString($bytes)
   if ($utf8.IndexOf([char]0xFFFD) -ge 0) {
     try { return [Text.Encoding]::GetEncoding(936).GetString($bytes) } catch { }
