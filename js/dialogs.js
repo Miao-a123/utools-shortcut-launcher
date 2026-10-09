@@ -8,9 +8,20 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.1.0'
+  const VERSION = '1.2.0'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.2.0',
+      date: '2026-10-09',
+      items: [
+        '修复：部分应用图标取不到/显示过小（图标位置 "路径,索引" 解析失败、透明边距未裁剪）',
+        '修复：长名称第二行文字被裁切（图标尺寸改为自动为文字预留空间）',
+        '新增：侧边栏宽度可调（拖动右边缘，或设置面板滑块）',
+        '新增：打开插件后直接敲键盘即输入搜索框，无需先点击',
+        '调整：只保留侧边栏底部一个设置入口'
+      ]
+    },
     {
       v: '1.1.0',
       date: '2026-10-09',
@@ -572,22 +583,27 @@
           launch: launch,
           originalPath: r.path,
           iconLocation: r.iconLocation || '',
+          iconIndex: r.iconIndex == null ? 0 : r.iconIndex,
           categoryId: catId,
           icon: { type: 'auto' },
           source: o.source || 'manual'
         })
         sc.iconLocation = r.iconLocation || ''
+        sc.iconIndex = r.iconIndex == null ? 0 : r.iconIndex
         added.push(sc)
         names.push(sc.name)
         if (r.kind === 'url') {
           const job = { id: sc.id, url: r.target }
           // 带本地图标位置时作为兜底（如微信小程序快捷方式：favicon 取不到则用本地图标）
-          if (r.iconLocation && /\.(exe|dll|ico)$/i.test(r.iconLocation)) job.iconPath = r.iconLocation
+          if (r.iconLocation && /\.(exe|dll|ico)$/i.test(r.iconLocation)) {
+            job.iconPath = r.iconLocation
+            job.iconIndex = r.iconIndex
+          }
           iconJobs.push(job)
         } else if (r.iconLocation && /\.(exe|dll|ico)$/i.test(r.iconLocation)) {
-          iconJobs.push({ id: sc.id, path: r.iconLocation, iconPath: r.iconLocation })
+          iconJobs.push({ id: sc.id, path: r.iconLocation, iconPath: r.iconLocation, iconIndex: r.iconIndex })
         } else {
-          iconJobs.push({ id: sc.id, path: r.path, iconPath: r.path })
+          iconJobs.push({ id: sc.id, path: r.path, iconPath: r.path, iconIndex: -1 })
         }
       }
     })
@@ -607,7 +623,7 @@
       else local.push(j)
     }
     if (local.length) {
-      KL.icons.extractBatch(local.map(j => ({ path: j.path, iconPath: j.iconPath }))).then(results => {
+      KL.icons.extractBatch(local.map(j => ({ path: j.path, iconPath: j.iconPath, iconIndex: j.iconIndex }))).then(results => {
         results.forEach((data, i) => {
           const job = local[i]
           if (!data || !job) return
@@ -632,7 +648,7 @@
         KL.icons.extractOne(sc).then(async data => {
           // 网址图标抓取失败时，回退到本地图标（如 .lnk 带的 IconLocation）
           if (!data && job.iconPath && S.exists(job.iconPath)) {
-            const res = await KL.icons.extractBatch([{ path: job.iconPath, iconPath: job.iconPath }])
+            const res = await KL.icons.extractBatch([{ path: job.iconPath, iconPath: job.iconPath, iconIndex: job.iconIndex }])
             if (res && res[0]) data = await KL.icons.normalize(res[0], 128)
           }
           if (data) {
@@ -965,7 +981,7 @@
       }
     }
     if (localJobs.length) {
-      KL.icons.extractBatch(localJobs.map(j => ({ path: j.path, iconPath: j.iconPath }))).then(results => {
+      KL.icons.extractBatch(localJobs.map(j => ({ path: j.path, iconPath: j.iconPath, iconIndex: j.iconIndex }))).then(results => {
         results.forEach((d, i) => {
           const job = localJobs[i]
           if (!d || !job) return
@@ -1358,6 +1374,25 @@
       store.setSetting('cell', parseInt(sizeRange.value, 10))
     })
     body.appendChild(field('图标格子大小', sizeRow))
+
+    const sbRange = el('input')
+    sbRange.type = 'range'
+    sbRange.min = '120'
+    sbRange.max = '420'
+    sbRange.step = '4'
+    sbRange.value = String(s.sidebarWidth || 184)
+    sbRange.style.width = '100%'
+    const sbLabel = el('span', 'stat', (s.sidebarWidth || 184) + ' px')
+    const sbRow = el('div', 'row')
+    sbRow.appendChild(sbRange)
+    sbRow.appendChild(sbLabel)
+    sbRange.addEventListener('input', () => {
+      sbLabel.textContent = sbRange.value + ' px'
+      store.setSetting('sidebarWidth', parseInt(sbRange.value, 10))
+      document.documentElement.style.setProperty('--sidebar-w', sbRange.value + 'px')
+      KL.grid.render()
+    })
+    body.appendChild(field('侧边栏宽度', sbRow, '也可以直接拖动侧边栏右侧边缘调整'))
 
     const radiusRange = el('input')
     radiusRange.type = 'range'

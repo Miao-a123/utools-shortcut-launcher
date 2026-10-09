@@ -39,8 +39,11 @@
   function iconSizeFor (sc, showLabels) {
     const box = tilePixelBox(sc)
     const base = Math.min(box.w, box.h)
-    const ratio = showLabels ? 0.56 : 0.74
-    return clamp(Math.round(base * ratio), 22, 168)
+    if (!showLabels) return clamp(Math.round(base * 0.72), 22, 168)
+    // 预留两行文字 + 内边距/间距的高度，避免长名称第二行被裁掉
+    const labelH = 2 * 11.5 * 1.25 + 1
+    const chrome = 6 * 2 + 6
+    return clamp(Math.round(base - chrome - labelH), 22, 168)
   }
 
   /* ---------------- rendering ---------------- */

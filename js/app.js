@@ -33,6 +33,39 @@
     document.documentElement.style.setProperty('--tile-radius', (s.tileRadius || 16) + 'px')
     const grid = document.getElementById('grid')
     if (grid) grid.style.setProperty('--cell', cell + 'px')
+    const sw = Math.max(120, Math.min(420, parseInt(s.sidebarWidth, 10) || 184))
+    document.documentElement.style.setProperty('--sidebar-w', sw + 'px')
+  }
+
+  /* ---------------- sidebar resize ---------------- */
+
+  function bindSideResizer () {
+    const handle = document.getElementById('sideResizer')
+    if (!handle) return
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault()
+      const startX = e.clientX
+      const startW = parseInt(store.settings.sidebarWidth, 10) || 184
+      handle.classList.add('active')
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      const onMove = ev => {
+        const w = Math.max(120, Math.min(420, startW + (ev.clientX - startX)))
+        document.documentElement.style.setProperty('--sidebar-w', w + 'px')
+      }
+      const onUp = ev => {
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+        handle.classList.remove('active')
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+        const w = Math.max(120, Math.min(420, startW + (ev.clientX - startX)))
+        store.setSetting('sidebarWidth', w)
+        KL.grid.render()
+      }
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+    })
   }
 
   /* ---------------- sidebar ---------------- */
@@ -201,8 +234,6 @@
       store.setSetting('showLabels', !store.settings.showLabels)
       syncToolbar()
     })
-
-    document.getElementById('btnSettings').addEventListener('click', () => KL.dialogs.settings())
   }
 
   function manualNew () {
@@ -412,6 +443,15 @@
         updateSelectionBar()
         return
       }
+      // 直接键入即进入搜索（无需先点击搜索框）
+      if (!typing && !mod && !e.altKey && KL.ui.modalCount === 0 && e.key && e.key.length === 1) {
+        searchInput.focus()
+        searchInput.value += e.key
+        searchWrap.classList.add('has-value')
+        KL.grid.setKeyword(searchInput.value.trim())
+        e.preventDefault()
+        return
+      }
       if (typing) return
       const ids = KL.grid.selectedIds()
       if (e.key === 'Delete' && ids.length) {
@@ -483,6 +523,7 @@
           KL.grid.setKeyword(t)
         }
       }
+      focusSearch()
     })
 
     window.utools.onPluginOut(() => {
@@ -492,6 +533,11 @@
   }
 
   /* ---------------- boot ---------------- */
+
+  function focusSearch () {
+    if (!searchInput) return
+    setTimeout(() => { try { searchInput.focus() } catch (e) {} }, 60)
+  }
 
   function boot () {
     store.load()
@@ -504,6 +550,7 @@
     KL.grid.init()
     renderSidebar()
     bindToolbar()
+    bindSideResizer()
     bindSelbar()
     bindFileDrop()
     bindKeys()
@@ -545,6 +592,7 @@
     })
 
     initUtools()
+    focusSearch()
 
     // 首次使用时给一个引导
     if (!store.shortcuts.length && !sessionStorage.getItem('kl-seen-tip')) {

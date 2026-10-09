@@ -201,8 +201,19 @@ function Invoke-KlResolve {
           $tp = [string]$lnk.TargetPath
           $row.args = [string]$lnk.Arguments
           $row.workDir = [string]$lnk.WorkingDirectory
-          $row.iconLocation = [string]$lnk.IconLocation
           $row.description = [string]$lnk.Description
+          # IconLocation is "path,index" -- split it so the JS side gets a real
+          # file path (otherwise exists() checks on "x.exe,0" always fail)
+          $il = [string]$lnk.IconLocation
+          $row.iconLocation = ''
+          $row.iconIndex = 0
+          if ($il) {
+            $mIl = [regex]::Match($il, '^(.*?)(?:,\s*(-?\d+))?\s*$')
+            if ($mIl.Success) {
+              $row.iconLocation = $mIl.Groups[1].Value.Trim().Trim('"')
+              if ($mIl.Groups[2].Success) { $row.iconIndex = [int]$mIl.Groups[2].Value }
+            }
+          }
           if ($tp -and $tp -match '^[a-zA-Z][a-zA-Z0-9+.\-]*://') {
             # target itself is a URL (custom protocol shortcut)
             $row.target = $tp

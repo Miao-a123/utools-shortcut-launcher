@@ -261,6 +261,19 @@
     return { kind: 'file', path: target }
   }
 
+  // 解析图标位置字符串（兼容旧数据里 "C:\x\y.exe,0" / ",0" 这类带索引的写法）
+  function parseIconLocation (raw, fallbackIndex) {
+    let p = String(raw == null ? '' : raw).trim()
+    let idx = fallbackIndex == null ? -1 : fallbackIndex
+    if (!p) return { path: '', index: idx }
+    const m = /^(.*?)(?:,\s*(-?\d+))?\s*$/.exec(p)
+    if (m) {
+      if (m[2] != null && (idx == null || idx < 0)) idx = parseInt(m[2], 10)
+      p = String(m[1] || '').trim().replace(/^"(.*)"$/, '$1')
+    }
+    return { path: p, index: idx }
+  }
+
   async function extractOne (sc) {
     const src = iconSourceOf(sc)
     if (!src) return null
@@ -275,10 +288,17 @@
       return normalize(r.dataUrl, 128)
     }
     // 本地文件 / 快捷方式 / UWP
-    const iconPath = sc.iconLocation || sc.originalPath || (sc.launch.kind === 'file' ? sc.launch.target : '')
-    if (!iconPath) return null
-    if (!S.exists(iconPath)) return null
-    const res = await S.extractIcons([{ path: sc.originalPath || iconPath, iconPath: iconPath }])
+    const l = (sc && sc.launch) || {}
+    const loc = parseIconLocation(sc.iconLocation, sc.iconIndex)
+    let iconPath = loc.path
+    if (!iconPath) iconPath = sc.originalPath || (l.kind === 'file' ? l.target : '')
+    // 指定图标路径不可用时，回退到原始快捷方式文件 / 目标
+    if (iconPath && !S.exists(iconPath)) {
+      const alt = sc.originalPath || (l.kind === 'file' ? l.target : '')
+      if (alt && S.exists(alt)) { iconPath = alt; loc.index = -1 }
+    }
+    if (!iconPath || !S.exists(iconPath)) return null
+    const res = await S.extractIcons([{ path: iconPath, iconPath: iconPath, iconIndex: loc.index }])
     if (!res || !res.ok || !res.items || !res.items.length) return null
     const it = res.items[0]
     if (!it || !it.ok || !it.png) return null
@@ -400,6 +420,7 @@
     normalize: normalize,
     resolve: resolve,
     isFallback: isFallback,
+    parseIconLocation: parseIconLocation,
     extractOne: extractOne,
     extractBatch: extractBatch,
     ensure: ensure,
