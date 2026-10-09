@@ -88,6 +88,41 @@
       sc('固件备份', 'path', 'E:\\imo\\firmware', null, 1, 1, 'folder', '#0F6E56'),
       sc('演示视频.mp4', 'path', 'E:\\imo\\demo\\ble-hid.mp4', null, 2, 1, 'video')
     ]
+
+    // —— 文件夹示例：同一容器，1×1 点开才能操作，m×n 直接点图标 ——
+    const folders = []
+    function mkFolder (name, cat, col, row, color, kids) {
+      const id = 'fold' + (folders.length + 1)
+      folders.push({
+        id: id, kind: 'folder', name: name, color: color, col: col, row: row,
+        parentId: null, categoryId: cat,
+        launch: { kind: 'path', target: '' }, icon: { type: 'auto' },
+        createdAt: Date.now(), updatedAt: Date.now(), source: 'mock'
+      })
+      kids.forEach(function (k, i) {
+        items.push({
+          id: id + '_' + i, kind: 'shortcut', name: k[0], parentId: id,
+          col: 1, row: 1, categoryId: cat,
+          launch: { kind: 'path', target: k[1] },
+          icon: { type: 'glyph', kind: k[2] || 'app' },
+          originalPath: k[1], iconLocation: '', source: 'mock',
+          createdAt: Date.now(), updatedAt: Date.now()
+        })
+      })
+    }
+    mkFolder('开发工具合集', 'c1', 2, 2, '#534AB7', [
+      ['Git Bash', 'C:\\Program Files\\Git\\git-bash.exe', 'code'],
+      ['CMake', 'C:\\Program Files\\CMake\\bin\\cmake.exe', 'code'],
+      ['Ninja', 'C:\\tools\\ninja.exe', 'code'],
+      ['OpenOCD', 'C:\\tools\\openocd\\bin\\openocd.exe', 'app'],
+      ['串口助手', 'C:\\tools\\serial.exe', 'app']
+    ])
+    mkFolder('常用小工具', null, 1, 1, '#0F6E56', [
+      ['计算器', 'C:\\Windows\\System32\\calc.exe', 'app'],
+      ['画图', 'C:\\Windows\\System32\\mspaint.exe', 'image'],
+      ['记事本', 'C:\\Windows\\System32\\notepad.exe', 'doc']
+    ])
+
     return {
       version: 1,
       settings: {
@@ -95,7 +130,7 @@
         launchOnDoubleClick: false, confirmDelete: true, hideOnLaunch: true, tileRadius: 16
       },
       categories: cats,
-      shortcuts: items
+      shortcuts: folders.concat(items)
     }
   }
 

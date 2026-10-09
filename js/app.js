@@ -203,6 +203,7 @@
         { label: '添加文件 / 文件夹…', onClick: () => KL.dialogs.addFromFiles() },
         { label: '添加网址…', onClick: () => KL.dialogs.addUrl() },
         { label: '从剪贴板添加', onClick: () => KL.dialogs.addFromClipboard() },
+        { label: '新建文件夹', onClick: () => KL.dialogs.newFolder() },
         { separator: true },
         { label: '手动新建快捷方式…', onClick: () => manualNew() },
         { separator: true },
@@ -281,6 +282,38 @@
           label: c.name,
           onClick: () => { store.batch(() => ids.forEach(id => store.setCategory(id, c.id))); finishBatch() }
         }))), { x: r.left, y: r.top })
+    })
+    document.getElementById('selFolder').addEventListener('click', e => {
+      const r = e.currentTarget.getBoundingClientRect()
+      const ids = KL.grid.selectedIds()
+      if (!ids.length) return
+      const cat = KL.grid.getCategory()
+      const catId = (cat === 'all' || cat === 'none') ? null : cat
+      const folders = store.shortcuts.filter(s => s.kind === 'folder' && !s.parentId)
+      const items = [{
+        label: '新建文件夹…',
+        onClick: async () => {
+          const n = await KL.ui.prompt({ title: '装进新文件夹', value: '新建文件夹', placeholder: '文件夹名称', okText: '创建' })
+          if (n == null || !n) return
+          store.batch(() => {
+            const f = store.createFolder({ name: n, categoryId: catId })
+            store.setParent(ids, f.id)
+          })
+          toast('已创建「' + n + '」并放入 ' + ids.length + ' 项')
+          finishBatch()
+        }
+      }]
+      if (folders.length) {
+        items.push({ separator: true })
+        items.push({
+          label: '放进已有文件夹',
+          items: folders.map(f => ({
+            label: f.name,
+            onClick: () => { store.setParent(ids, f.id); toast('已移入「' + f.name + '」'); finishBatch() }
+          }))
+        })
+      }
+      KL.ui.menu(items, { x: r.left, y: r.top - 8 })
     })
     document.getElementById('selSize').addEventListener('click', e => {
       const r = e.currentTarget.getBoundingClientRect()

@@ -8,9 +8,20 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.2.3'
+  const VERSION = '1.3.0'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.3.0',
+      date: '2026-10-09',
+      items: [
+        '新增：文件夹 / 大文件夹（同一个容器）——1×1 是小文件夹，点开后在弹层里操作图标；把尺寸调大即成为大文件夹，内部图标平铺显示、可直接点击，且内部每个图标也能各自调整大小',
+        '新增：文件夹可设置背景颜色、重命名；右键可调整尺寸、解散（内部图标移回主面板）、删除',
+        '新增：图标可自由移入 / 移出文件夹——拖到文件夹上即放入，从大文件夹拖到主面板即移出，多选后可整体移入',
+        '新增：橡皮筋框选——在空白处拖拽画框即可多选图标（Ctrl 可追加），选中后支持批量拖拽、删除、装进新文件夹',
+        '新增：右键/工具栏提供"新建文件夹"与"装进文件夹"'
+      ]
+    },
     {
       v: '1.2.3',
       date: '2026-10-09',
@@ -1251,6 +1262,130 @@
    * 分类
    * ================================================================== */
 
+  /* ==================================================================
+   * 文件夹
+   * ================================================================== */
+
+  function newFolder () {
+    KL.ui.prompt({ title: '新建文件夹', value: '新建文件夹', placeholder: '文件夹名称', okText: '创建' }).then(name => {
+      if (name == null || !name) return
+      const cat = KL.grid.getCategory()
+      store.createFolder({ name: name, categoryId: (cat === 'all' || cat === 'none') ? null : cat })
+      KL.app.renderSidebar()
+      KL.grid.render()
+      toast('已创建「' + name + '」')
+    })
+  }
+
+  // 小文件夹（1×1）的内容视图：点开后才能操作其中的图标
+  function folderView (folderId) {
+    const folder = store.getShortcut(folderId)
+    if (!folder) return
+    const body = el('div')
+
+    const head = el('div', 'fv-head')
+    const countEl = el('span', 'fv-count', '')
+    const renameBtn = el('button', 'btn', '重命名')
+    const colorBtn = el('button', 'btn', '背景色')
+    const sizeBtn = el('button', 'btn', '尺寸')
+    head.appendChild(countEl)
+    head.appendChild(el('div', 'grow'))
+    head.appendChild(renameBtn)
+    head.appendChild(colorBtn)
+    head.appendChild(sizeBtn)
+    body.appendChild(head)
+
+    const gridEl = el('div', 'fv-grid')
+    body.appendChild(gridEl)
+
+    function refresh () {
+      const kids = store.childrenOf(folderId)
+      countEl.textContent = kids.length + ' 项'
+      gridEl.innerHTML = ''
+      if (!kids.length) {
+        gridEl.appendChild(el('div', 'fv-empty', '这个文件夹还是空的'))
+        return
+      }
+      for (const k of kids) {
+        const item = el('div', 'fv-item')
+        const img = el('img')
+        img.src = KL.icons.resolve(k)
+        img.draggable = false
+        item.appendChild(img)
+        const nm = el('div', 'fv-name')
+        nm.textContent = k.name
+        nm.title = k.name
+        item.appendChild(nm)
+        item.addEventListener('click', () => KL.grid.launch(k))
+        item.addEventListener('contextmenu', e => {
+          e.preventDefault()
+          e.stopPropagation()
+          KL.ui.menu([
+            { label: '打开', onClick: () => KL.grid.launch(k) },
+            { separator: true },
+            { label: '移出文件夹', onClick: () => { store.setParent([k.id], null); toast('已移出'); refresh(); KL.grid.render() } },
+            { label: '编辑…', onClick: () => editShortcut(k, () => { refresh(); KL.grid.render() }) },
+            {
+              label: '刷新图标',
+              onClick: async () => {
+                const d = await KL.icons.ensure(k, { force: true })
+                if (d) { toast('图标已更新'); refresh() } else toast('没能取到图标', 'error')
+              }
+            },
+            { separator: true },
+            {
+              label: '删除',
+              danger: true,
+              onClick: async () => {
+                const ok = await KL.ui.confirm({ title: '删除', text: '确定删除「' + k.name + '」吗？', okText: '删除', danger: true })
+                if (!ok) return
+                store.removeShortcut(k.id)
+                refresh()
+                KL.grid.render()
+              }
+            }
+          ], { x: e.clientX, y: e.clientY })
+        })
+        gridEl.appendChild(item)
+      }
+    }
+
+    renameBtn.addEventListener('click', async () => {
+      const n = await KL.ui.prompt({ title: '重命名文件夹', value: folder.name, okText: '保存' })
+      if (n == null || !n) return
+      store.updateShortcut(folderId, { name: n })
+      api.box.querySelector('.modal-head h2').textContent = n
+      KL.grid.render()
+    })
+    colorBtn.addEventListener('click', e => {
+      const r = colorBtn.getBoundingClientRect()
+      KL.ui.menu(['', '#534AB7', '#185FA5', '#0F6E56', '#993C1D', '#993556', '#3B6D11', '#854F0B', '#5F5E5A'].map(c => ({
+        label: c || '无（默认）',
+        onClick: () => { store.updateShortcut(folderId, { color: c }); KL.grid.render() }
+      })), { x: r.left, y: r.bottom + 4 })
+    })
+    sizeBtn.addEventListener('click', e => {
+      const r = sizeBtn.getBoundingClientRect()
+      KL.ui.menu([[1, 1], [2, 1], [1, 2], [2, 2], [3, 2], [3, 3], [4, 3], [4, 4]].map(p => ({
+        label: p[0] + ' × ' + p[1] + (p[0] * p[1] === 1 ? '（小文件夹）' : '（大文件夹）'),
+        onClick: () => { store.updateShortcut(folderId, { col: p[0], row: p[1] }); KL.grid.render(); toast('尺寸已调整') }
+      })), { x: r.left, y: r.bottom + 4 })
+    })
+
+    const api = KL.ui.modal({
+      title: folder.name,
+      size: 'wide',
+      body: body,
+      buttons: function (foot, m) {
+        foot.appendChild(el('div', 'grow'))
+        const done = el('button', 'btn primary', '完成')
+        done.addEventListener('click', () => m.close())
+        foot.appendChild(done)
+      }
+    })
+    refresh()
+  }
+
   async function newCategory () {
     const name = await KL.ui.prompt({ title: '新建分类', placeholder: '分类名称' })
     if (!name) return null
@@ -1593,6 +1728,8 @@
 
   KL.dialogs = {
     ingestPaths,
+    newFolder,
+    folderView,
     ingestApps,
     ingestUrls,
     hydrate,

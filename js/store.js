@@ -50,6 +50,9 @@
     const launch = s.launch || {}
     return {
       id: s.id || uid('sc'),
+      kind: s.kind === 'folder' ? 'folder' : 'shortcut',
+      parentId: s.parentId || null,
+      color: s.color || '',
       name: s.name || (launch.target ? String(launch.target).split(/[\\/]/).pop() : '未命名'),
       categoryId: s.categoryId || null,
       col: Math.max(1, Math.min(4, parseInt(s.col, 10) || 1)),
@@ -221,20 +224,23 @@
   }
 
   function removeShortcut (id) {
-    const idx = state.shortcuts.findIndex(x => x.id === id)
-    if (idx < 0) return false
-    state.shortcuts.splice(idx, 1)
-    save()
-    emit('shortcuts')
-    return true
+    return removeShortcuts([id])
   }
 
   function removeShortcuts (ids) {
     const set = {}
-    ids.forEach(id => { set[id] = 1 })
+    // 删除文件夹时连同其内部项一起删除
+    const collect = id => {
+      if (set[id]) return
+      set[id] = 1
+      for (const s of state.shortcuts) if (s.parentId === id) collect(s.id)
+    }
+    ids.forEach(collect)
+    const before = state.shortcuts.length
     state.shortcuts = state.shortcuts.filter(s => !set[s.id])
     save()
     emit('shortcuts')
+    return state.shortcuts.length !== before
   }
 
   function getShortcut (id) {
@@ -260,9 +266,11 @@
   /* ---------------- ordering / filtering ---------------- */
 
   function inCategory (categoryId) {
-    if (!categoryId || categoryId === 'all') return state.shortcuts.slice()
-    if (categoryId === 'none') return state.shortcuts.filter(s => !s.categoryId)
-    return state.shortcuts.filter(s => s.categoryId === categoryId)
+    // 只返回顶层项：文件夹里的图标不直接出现在主网格上
+    const top = state.shortcuts.filter(s => !s.parentId)
+    if (!categoryId || categoryId === 'all') return top
+    if (categoryId === 'none') return top.filter(s => !s.categoryId)
+    return top.filter(s => s.categoryId === categoryId)
   }
 
   function compare (a, b) {
@@ -279,17 +287,85 @@
     let list = inCategory(categoryId)
     if (keyword) {
       const k = keyword.trim().toLowerCase()
-      list = list.filter(s => {
-        if (s.name.toLowerCase().indexOf(k) >= 0) return true
-        if (String(s.launch.target).toLowerCase().indexOf(k) >= 0) return true
-        if (String(s.note).toLowerCase().indexOf(k) >= 0) return true
-        return false
+      const hits = {}
+      state.shortcuts.forEach(s => {
+        if (s.kind === 'folder') {
+          if (String(s.name).toLowerCase().indexOf(k) >= 0) hits[s.id] = 1
+          return
+        }
+        const matched = s.name.toLowerCase().indexOf(k) >= 0 ||
+          String(s.launch.target).toLowerCase().indexOf(k) >= 0 ||
+          String(s.note).toLowerCase().indexOf(k) >= 0
+        if (matched) {
+          hits[s.id] = 1
+          if (s.parentId) hits[s.parentId] = 1   // 命中文件夹内的图标时，把文件夹一并显示
+        }
       })
+      list = list.filter(s => hits[s.id])
     }
     if (state.settings.sortBy !== 'manual') {
       list.sort(compare)
     }
     return list
+  }
+
+  /* ---------------- folders ---------------- */
+
+  function createFolder (partial) {
+    const p = partial || {}
+    const f = normalizeShortcut({
+      kind: 'folder',
+      name: p.name || '新建文件夹',
+      color: p.color || '',
+      col: p.col || 1,
+      row: p.row || 1,
+      categoryId: p.categoryId === undefined ? null : p.categoryId,
+      launch: { kind: 'path', target: '' }
+    })
+    state.shortcuts.push(f)
+    save()
+    emit('shortcuts')
+    return f
+  }
+
+  function childrenOf (folderId) {
+    return state.shortcuts.filter(s => s.parentId === folderId)
+  }
+
+  function childCount (folderId) {
+    let n = 0
+    for (const s of state.shortcuts) if (s.parentId === folderId) n++
+    return n
+  }
+
+  // 把若干项移入 / 移出文件夹（parentId = null 表示移到主网格）
+  function setParent (ids, parentId) {
+    const pid = parentId || null
+    for (const id of ids) {
+      const s = state.shortcuts.find(x => x.id === id)
+      if (!s || s.id === pid) continue
+      if (s.kind === 'folder' && pid) continue   // 文件夹不允许嵌套
+      s.parentId = pid
+      s.updatedAt = Date.now()
+    }
+    save()
+    emit('shortcuts')
+  }
+
+  // 解散文件夹：内部项回到主网格，文件夹本身删除
+  function dissolveFolder (folderId) {
+    let n = 0
+    state.shortcuts.forEach(s => { if (s.parentId === folderId) { s.parentId = null; n++ } })
+    const idx = state.shortcuts.findIndex(s => s.id === folderId)
+    if (idx >= 0) state.shortcuts.splice(idx, 1)
+    save()
+    emit('shortcuts')
+    return n
+  }
+
+  function folderOf (id) {
+    const s = getShortcut(id)
+    return s && s.parentId ? getShortcut(s.parentId) : null
   }
 
   function manualOrderOf (id) {
@@ -345,8 +421,9 @@
   }
 
   function countByCategory (categoryId) {
-    if (categoryId === 'none') return state.shortcuts.filter(s => !s.categoryId).length
-    return state.shortcuts.filter(s => s.categoryId === categoryId).length
+    const top = state.shortcuts.filter(s => !s.parentId)
+    if (categoryId === 'none') return top.filter(s => !s.categoryId).length
+    return top.filter(s => s.categoryId === categoryId).length
   }
 
   function setSetting (key, value) {
@@ -426,6 +503,12 @@
     removeShortcut,
     removeShortcuts,
     getShortcut,
+    createFolder,
+    childrenOf,
+    childCount,
+    setParent,
+    dissolveFolder,
+    folderOf,
     setCategory,
     findByTarget,
     findByUrl,
