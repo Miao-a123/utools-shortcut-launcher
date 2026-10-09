@@ -159,8 +159,8 @@
 
   function modal (opts) {
     const o = opts || {}
-    const mask = el('div', 'mask')
-    const box = el('div', 'modal' + (o.size ? ' ' + o.size : ''))
+    const mask = el('div', 'mask' + (o.placement ? ' ' + o.placement : ''))
+    const box = el('div', 'modal' + (o.size ? ' ' + o.size : '') + (o.placement ? ' anchored' : ''))
     const head = el('div', 'modal-head')
     const h = el('h2')
     h.textContent = o.title || ''

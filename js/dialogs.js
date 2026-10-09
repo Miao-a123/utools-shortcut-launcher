@@ -8,9 +8,17 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.4.0'
+  const VERSION = '1.5.0'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.5.0',
+      date: '2026-10-09',
+      items: [
+        '新增：图标格子背景色支持不透明度调节 —— 选好颜色后拖动「不透明度」滑块即可让背景半透明，0% 全透明、100% 完全不透明',
+        '改进：设置面板改为从左下角弹出的小面板，遮罩全透明，尽量不遮挡图标页面；同时收窄了面板宽度'
+      ]
+    },
     {
       v: '1.4.0',
       date: '2026-10-09',
@@ -1530,6 +1538,12 @@
     const s = store.settings
     const body = el('div')
 
+    // 按当前颜色 + 不透明度刷新格子背景（含 alpha）
+    function applyTileBg () {
+      const val = KL.app.tileBgValue ? KL.app.tileBgValue(store.settings) : (store.settings.tileBgColor || 'transparent')
+      document.documentElement.style.setProperty('--tile-bg', val)
+    }
+
     const labelSeg = segmented([
       { value: true, label: '显示名称' },
       { value: false, label: '隐藏名称' }
@@ -1612,11 +1626,33 @@
     })
     body.appendChild(field('文件夹内图标大小', folderSizeSeg, '只影响大文件夹内部图标的显示大小，与文件夹本身尺寸无关'))
 
-    const bgRow = colorRow(s.tileBgColor, v => {
+    const bgWrap = el('div')
+    bgWrap.appendChild(colorRow(s.tileBgColor, v => {
       store.setSetting('tileBgColor', v)
-      document.documentElement.style.setProperty('--tile-bg', v || 'transparent')
+      applyTileBg()
+    }))
+    bgWrap.appendChild(el('div', '', '<div style="height:8px"></div>'))
+    const opRange = el('input')
+    opRange.type = 'range'
+    opRange.min = '0'
+    opRange.max = '100'
+    opRange.step = '1'
+    opRange.value = String(s.tileBgOpacity == null ? 100 : s.tileBgOpacity)
+    opRange.style.width = '100%'
+    const opLabel = el('span', 'stat', (s.tileBgOpacity == null ? 100 : s.tileBgOpacity) + '%')
+    const opRow = el('div', 'row')
+    const opName = el('span', 'stat', '不透明度')
+    opName.style.whiteSpace = 'nowrap'
+    opRow.appendChild(opName)
+    opRow.appendChild(opRange)
+    opRow.appendChild(opLabel)
+    opRange.addEventListener('input', () => {
+      opLabel.textContent = opRange.value + '%'
+      store.setSetting('tileBgOpacity', parseInt(opRange.value, 10))
+      applyTileBg()
     })
-    body.appendChild(field('图标格子背景', bgRow, '留空为透明'))
+    bgWrap.appendChild(opRow)
+    body.appendChild(field('图标格子背景', bgWrap, '留空为透明；选好颜色后可用下面的滑块把背景调成半透明'))
 
     const borderWrap = el('div')
     borderWrap.appendChild(colorRow(s.tileBorderColor, v => {
@@ -1741,7 +1777,7 @@
 
     KL.ui.modal({
       title: '设置',
-      size: 'wide',
+      placement: 'bottom-left',
       body: body,
       buttons: function (foot, m) {
         const grow = el('div', 'grow')

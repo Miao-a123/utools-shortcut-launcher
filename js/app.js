@@ -15,6 +15,26 @@
 
   /* ---------------- theme & vars ---------------- */
 
+  // 把 #rgb / #rrggbb 与 0~1 的透明度合成为 rgba()，非法输入返回 ''
+  function hexToRgba (hex, alpha) {
+    let h = String(hex == null ? '' : hex).trim().replace(/^#/, '')
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2]
+    if (!/^[0-9a-fA-F]{6}$/.test(h)) return ''
+    const r = parseInt(h.slice(0, 2), 16)
+    const g = parseInt(h.slice(2, 4), 16)
+    const b = parseInt(h.slice(4, 6), 16)
+    const a = Math.max(0, Math.min(1, Number(alpha)))
+    return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + (isNaN(a) ? 1 : a) + ')'
+  }
+
+  function tileBgValue (s) {
+    if (!s.tileBgColor) return 'transparent'
+    let op = parseInt(s.tileBgOpacity, 10)
+    if (isNaN(op)) op = 100
+    op = Math.max(0, Math.min(100, op))
+    return hexToRgba(s.tileBgColor, op / 100) || s.tileBgColor
+  }
+
   function applyTheme () {
     const mode = store.settings.theme || 'auto'
     let dark = true
@@ -35,7 +55,7 @@
     if (grid) grid.style.setProperty('--cell', cell + 'px')
     const sw = Math.max(120, Math.min(420, parseInt(s.sidebarWidth, 10) || 184))
     document.documentElement.style.setProperty('--sidebar-w', sw + 'px')
-    document.documentElement.style.setProperty('--tile-bg', s.tileBgColor || 'transparent')
+    document.documentElement.style.setProperty('--tile-bg', tileBgValue(s))
     document.documentElement.style.setProperty('--tile-border-color', s.tileBorderColor || 'transparent')
     document.documentElement.style.setProperty('--tile-border-w', (parseInt(s.tileBorderWidth, 10) || 1) + 'px')
   }
@@ -642,6 +662,7 @@
   KL.app = {
     applyTheme: applyTheme,
     applyVars: applyVars,
+    tileBgValue: tileBgValue,
     renderSidebar: renderSidebar,
     setCategory: setCategory,
     syncToolbar: syncToolbar,

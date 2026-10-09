@@ -589,6 +589,34 @@ html[data-theme='light'] .drop-overlay { background: rgba(240, 240, 240, 0.7); }
 }
 .modal-foot .grow { flex: 1 1 auto; }
 
+/* 左下角弹出的轻量面板（尽量不遮挡图标页） */
+.mask.bottom-left {
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding: 0 0 14px 14px;
+  background: transparent;
+}
+.mask.bottom-left .modal.anchored {
+  width: min(400px, calc(100vw - 28px));
+  max-width: 400px;
+  max-height: min(74vh, 600px);
+  border-radius: 14px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.32);
+  transform-origin: left bottom;
+  animation: popBottomLeft .16s ease-out;
+}
+@keyframes popBottomLeft {
+  from { opacity: 0; transform: translateY(10px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.mask.bottom-left .modal-head { padding: 11px 14px; }
+.mask.bottom-left .modal-body { padding: 13px 14px; }
+.mask.bottom-left .modal-foot { padding: 10px 14px; }
+.mask.bottom-left .row { gap: 10px; }
+.mask.bottom-left .row .stat { white-space: nowrap; flex: 0 0 auto; min-width: 46px; text-align: right; }
+.mask.bottom-left .row .stat:first-child { text-align: left; }
+
+
 /* ---------------- forms ---------------- */
 
 .field { margin-bottom: 13px; }

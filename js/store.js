@@ -11,6 +11,7 @@
     sidebarWidth: 184,
     folderIconSize: 'medium',
     tileBgColor: '',
+    tileBgOpacity: 100,
     tileBorderColor: '',
     tileBorderWidth: 1,
     theme: 'auto',
