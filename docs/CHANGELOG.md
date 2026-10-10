@@ -31,6 +31,8 @@
 - 新增 `docs/使用手册.md`（官方要求"插件应用介绍中提供用户手册"）。
 - 重新生成 `docs/screenshot-*.png` 共 6 张，替换 v1.0 时期的旧图。
 - `.gitignore` 增加 `/dist/`。
+- 修正 `docs/使用手册.md` 中数据目录说明的错误：日志文件名写成了 `app.log`，实际是
+  `plugin.log`（`preload.js` 的 `LOG_FILE`）；同时补上 `tmp/` 临时目录。
 
 ### 理由
 
