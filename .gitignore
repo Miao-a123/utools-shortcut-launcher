@@ -3,3 +3,6 @@ _*.html
 _*.json
 tools/_*.json
 tools/_*.js
+
+# 发布构建产物（由 tools/release.js 生成，可随时重建）
+/dist/

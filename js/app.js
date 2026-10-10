@@ -6,7 +6,7 @@
   const el = KL.ui.el
   const toast = KL.ui.toast
 
-  const KEYWORDS = ['快捷方式', '快捷启动', '快捷面板', 'launcher', 'shortcut', 'kl']
+  const KEYWORDS = ['快捷方式', '快捷启动', '快捷面板']
 
   let searchInput = null
   let searchWrap = null

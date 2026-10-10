@@ -1,9 +1,9 @@
 {
   "pluginName": "shortcut-launcher",
   "version": "1.5.0",
-  "description": "快捷方式面板：拖拽文件/网址快速创建图标，侧边栏分类管理，宫格自由尺寸布局，图标与名称可自定义",
+  "description": "快捷方式面板：把常用程序、文件、文件夹、网址收进一个宫格面板，支持文件夹 / 大文件夹分组、侧边栏分类、图标自由尺寸与自定义、搜索直达",
   "author": "imo",
-  "homepage": "",
+  "homepage": "https://github.com/Miao-a123/utools-shortcut-launcher",
   "main": "index.html",
   "logo": "logo.png",
   "preload": "preload.js",
@@ -12,8 +12,8 @@
       "code": "launcher",
       "explain": "快捷方式面板",
       "icon": "logo.png",
-      "platform": ["win32", "darwin", "linux"],
-      "cmds": ["快捷方式", "快捷启动", "快捷面板", "launcher", "shortcut", "kl"]
+      "platform": ["win32"],
+      "cmds": ["快捷方式", "快捷启动", "快捷面板"]
     },
     {
       "code": "launcher-add",
@@ -24,14 +24,8 @@
         {
           "type": "files",
           "label": "添加为快捷方式",
-          "fileType": "file",
-          "match": "/.+/"
-        },
-        {
-          "type": "files",
-          "label": "添加文件夹为快捷方式",
-          "fileType": "directory",
-          "match": "/.+/"
+          "minLength": 1,
+          "maxLength": 100
         }
       ]
     },
@@ -44,8 +38,9 @@
         {
           "type": "regex",
           "label": "添加网址为快捷方式",
-          "match": "/^https?:\\/\\//",
-          "minLength": 8
+          "match": "/^https?:\\/\\/[^\\s]+$/i",
+          "minLength": 8,
+          "maxLength": 2000
         }
       ]
     }

@@ -58,7 +58,7 @@
       updatedAt: now - seq * 3600000,
       launchCount: seq,
       lastLaunched: now - seq * 1800000,
-      missing: name === 'STM32CubeIDE'
+      missing: false
     }
   }
 
@@ -110,7 +110,7 @@
         })
       })
     }
-    mkFolder('开发工具合集', 'c1', 2, 2, '#534AB7', [
+    mkFolder('开发工具合集', 'c1', 3, 2, '#534AB7', [
       ['Git Bash', 'C:\\Program Files\\Git\\git-bash.exe', 'code'],
       ['CMake', 'C:\\Program Files\\CMake\\bin\\cmake.exe', 'code'],
       ['Ninja', 'C:\\tools\\ninja.exe', 'code'],
@@ -327,6 +327,10 @@
           if (!sc) return
           if (dlg === 'edit') KL.dialogs.editShortcut(sc, function () {})
           else KL.dialogs.iconPicker(sc, function () {})
+        } else if (dlg === 'folder') {
+          const f = KL.store.shortcuts.filter(function (s) { return s.kind === 'folder' })[0]
+          if (!f) return
+          KL.dialogs.folderView(f.id)
         } else if (dlg === 'confirm') {
           KL.ui.confirm({ title: '删除快捷方式', text: '确定删除「VS Code」吗？', okText: '删除', danger: true })
         }
