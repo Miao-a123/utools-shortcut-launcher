@@ -509,6 +509,10 @@ html[data-theme='light'] .drop-overlay { background: rgba(240, 240, 240, 0.7); }
   border: 1px solid var(--border-strong);
   background: var(--surface);
   box-shadow: var(--shadow);
+  /* 菜单比窗口还高时自身滚动，避免底部项被窗口裁掉 */
+  max-height: calc(100vh - 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: none;
 }
 .ctx.show { display: block; }
@@ -526,11 +530,16 @@ html[data-theme='light'] .drop-overlay { background: rgba(240, 240, 240, 0.7); }
 .ctx .item .k { margin-left: auto; font-size: 11px; color: var(--text-3); }
 .ctx .sep { height: 1px; background: var(--border); margin: 4px 6px; }
 .ctx .label { font-size: 11px; color: var(--text-3); padding: 4px 9px 2px; }
+/* 二级菜单：位置由 js/ui.js 的 placeSub() 在每次悬停时计算并夹进视口，
+   这里只给外观与兜底尺寸（固定定位可脱离父级 overflow 裁剪） */
 .ctx .sub {
-  position: absolute; left: 100%; top: -5px;
+  position: fixed; left: 0; top: 0;
   min-width: 150px; padding: 5px;
   border-radius: 11px; border: 1px solid var(--border-strong);
   background: var(--surface); box-shadow: var(--shadow);
+  max-height: calc(100vh - 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: none;
 }
 .ctx .item.has-sub { position: relative; }

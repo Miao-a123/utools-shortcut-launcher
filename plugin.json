@@ -1,6 +1,6 @@
 {
   "pluginName": "shortcut-launcher",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "快捷方式面板：把常用程序、文件、文件夹、网址收进一个宫格面板，支持文件夹 / 大文件夹分组、侧边栏分类、图标自由尺寸与自定义、搜索直达",
   "author": "imo",
   "homepage": "https://github.com/Miao-a123/utools-shortcut-launcher",

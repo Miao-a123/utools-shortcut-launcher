@@ -8,9 +8,17 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.5.0'
+  const VERSION = '1.5.1'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.5.1',
+      date: '2026-10-11',
+      items: [
+        '修复：右键菜单的二级菜单（如「图标尺寸」「移动到分类」）在靠近窗口边缘时会被窗口裁掉、看不见也点不到 —— 现在会自动判断空间，右侧放不下就翻到左侧展开，下方放不下就改为向上展开，并始终与父项保持重叠，鼠标可以顺畅移入',
+        '改进：菜单过高时自身滚动，不再溢出窗口'
+      ]
+    },
     {
       v: '1.5.0',
       date: '2026-10-09',

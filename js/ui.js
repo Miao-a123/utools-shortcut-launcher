@@ -85,6 +85,51 @@
     }
   }
 
+  // 二级菜单的边界处理。
+  // 原来 .sub 用 CSS 写死 left:100% 贴父项右侧，父菜单靠近窗口右缘时整个子菜单
+  // 会溢出到插件窗口外被裁掉，既看不见也点不到。这里改为固定定位 + 视口夹取：
+  // 右侧放不下就翻到左侧，两侧都放不下就把子菜单夹进视口内。
+  function placeSub (row, sub) {
+    const prevDisplay = sub.style.display
+    // 先让它可测量（.sub 默认 display:none 时 getBoundingClientRect 全是 0）
+    sub.style.display = 'block'
+    sub.style.visibility = 'hidden'
+    sub.style.left = 'auto'
+    sub.style.right = 'auto'
+
+    const s = sub.getBoundingClientRect()
+    const r = row.getBoundingClientRect()
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    const M = 6       // 与窗口边缘至少留 6px
+    const OVER = 4    // 与父项重叠 4px，避免鼠标穿过缝隙时子菜单就消失
+
+    // 水平：优先贴父项右侧；放不下且左侧放得下就翻到左侧；否则夹进视口
+    let left = r.right - OVER
+    if (left + s.width > vw - M) {
+      const flipped = r.left - s.width + OVER
+      left = flipped >= M ? flipped : Math.max(M, vw - M - s.width)
+    }
+    if (left + s.width > vw - M) left = vw - M - s.width
+    if (left < M) left = M
+
+    // 垂直：默认与父项顶部对齐（向下展开）；下方放不下就改成「向上展开」
+    // —— 底边对齐父项底边。这样无论向上向下，子菜单始终挨着父项，
+    // 鼠标从父项移到子菜单不会丢掉 hover。只有子菜单比整个窗口还高时，
+    // 才退回贴顶，由 CSS 的 max-height + 滚动兜底。
+    let top = r.top - 5
+    if (top + s.height > vh - M) {
+      top = r.bottom + 5 - s.height
+      if (top < M) top = M
+      if (top + s.height > vh - M) top = M
+    }
+
+    sub.style.left = Math.round(left) + 'px'
+    sub.style.top = Math.round(top) + 'px'
+    sub.style.visibility = ''
+    sub.style.display = prevDisplay
+  }
+
   function buildItems (container, items) {
     for (const it of items) {
       if (!it) continue
@@ -113,6 +158,8 @@
         const sub = el('div', 'sub')
         buildItems(sub, it.items)
         row.appendChild(sub)
+        // 每次悬停都重新定位：父菜单被夹到别的位置后，子菜单也要跟着重算
+        row.addEventListener('mouseenter', () => placeSub(row, sub))
       } else {
         row.addEventListener('click', ev => {
           ev.stopPropagation()

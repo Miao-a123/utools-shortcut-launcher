@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>ui-test</title>
+  <style>
+    body { margin: 0; font: 13px/1.5 system-ui, sans-serif; background: #fff; color: #111 }
+    #frame { width: 782px; height: 524px; border: 1px solid #ccc; display: block }
+    #log { padding: 8px 10px; white-space: pre-wrap; font-family: monospace; font-size: 12px }
+  </style>
+</head>
+<body>
+  <h2 style="font-size:14px;margin:8px 10px">UI 回归测试 —— 二级菜单越界（iframe 加载真实 index.html，782×524 模拟 uTools 窄窗口）</h2>
+  <iframe id="frame" src="../index.html?theme=dark"></iframe>
+  <div id="log"></div>
+  <script>
+  var frame = document.getElementById('frame')
+  var logEl = document.getElementById('log')
+
+  frame.addEventListener('load', function () {
+    setTimeout(run, 900)
+  })
+
+  function run () {
+    var out = []
+    function ok (n, c, x) { out.push((c ? 'PASS' : 'FAIL') + ':' + n + (x ? '[' + x + ']' : '')) }
+    try {
+      var W = frame.contentWindow
+      var D = frame.contentDocument
+      var KL = W.KL
+      if (!KL || !KL.ui) { out.push('ERROR:KL.ui 未加载'); return finish(out) }
+
+      var vw = W.innerWidth, vh = W.innerHeight
+      var M = 6
+
+      var SUB = []
+      for (var i = 1; i <= 8; i++) SUB.push({ label: '分类项目 ' + i, onClick: function () {} })
+      var BIG = []
+      for (var j = 1; j <= 40; j++) BIG.push({ label: '很长的分类名称 ' + j, onClick: function () {} })
+      var ITEMS = [
+        { label: '打开', onClick: function () {} },
+        { label: '编辑...', hint: 'F2', onClick: function () {} },
+        { separator: true },
+        { label: '移动到分类', items: SUB },
+        { label: '图标尺寸', items: SUB },
+        { separator: true },
+        { label: '删除', hint: 'Del', danger: true, onClick: function () {} }
+      ]
+      var TALL = [
+        { label: '打开', onClick: function () {} },
+        { label: '移动到分类', items: BIG },
+        { label: '删除', danger: true, onClick: function () {} }
+      ]
+
+      function probe (name, x, y, items) {
+        var m = KL.ui.menu(items || ITEMS, { x: x, y: y })
+        var row = m.querySelectorAll('.item.has-sub')[0]
+        var sub = row.querySelector('.sub')
+        row.dispatchEvent(new W.MouseEvent('mouseenter', { bubbles: false }))
+        sub.style.display = 'block'          // 模拟 :hover 生效后的显示状态
+        var r = sub.getBoundingClientRect()
+        var rr = row.getBoundingClientRect()
+
+        var inside = r.left >= M - 1 && r.top >= M - 1 &&
+                     r.right <= vw - M + 1 && r.bottom <= vh - M + 1
+        ok(name + '-in-viewport', inside,
+          'sub=' + [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)].join(',') +
+          ' win=' + vw + 'x' + vh)
+
+        // 鼠标要从父项横着移进子菜单，两者纵向必须重叠，否则中途 hover 会断
+        var vOverlap = Math.min(r.bottom, rr.bottom) - Math.max(r.top, rr.top)
+        ok(name + '-hangs-on-row', vOverlap > 0, 'overlap=' + Math.round(vOverlap))
+
+        // 默认应朝右展开；右侧放不下才翻到左侧
+        var dir = r.left >= rr.right - 6 ? 'right' : 'left'
+        var info = {
+          dir: dir, scrollH: sub.scrollHeight, clientH: sub.clientHeight
+        }
+        KL.ui.closeMenu()
+        return info
+      }
+
+      // ① 左侧正常位置 → 仍朝右展开（防回归）
+      var a = probe('left', 40, 120)
+      ok('left-goes-right', a.dir === 'right', a.dir)
+
+      // ② 靠近右缘（用户截图里的场景）
+      probe('near-right', vw - 200, 150)
+      // ③ 右下角
+      probe('bottom-right', vw - 200, vh - 140)
+      // ④ 贴最右下角
+      probe('corner', vw - 12, vh - 12)
+      // ⑤ 很窄
+      probe('narrow', vw - 120, 250)
+
+      // ⑥ 二级菜单比窗口还高 → 靠 max-height + 滚动兜住
+      var t = probe('tall', vw - 200, vh - 120, TALL)
+      ok('tall-scrolls', t.scrollH > t.clientH + 1, 'scrollH=' + t.scrollH + ' clientH=' + t.clientH)
+
+      // ⑦ 真实图标右键菜单端到端（grid.js -> showTileMenu）
+      var sc = KL.store.shortcuts.filter(function (s) { return s.kind !== 'folder' })[0]
+      KL.grid.showTileMenu(sc, vw - 210, 120)
+      var rows = D.querySelectorAll('.ctx .item.has-sub')
+      var picked = rows[0]
+      for (var k = 0; k < rows.length; k++) {
+        if (rows[k].textContent.indexOf('图标尺寸') >= 0) picked = rows[k]
+      }
+      var sb = picked.querySelector('.sub')
+      picked.dispatchEvent(new W.MouseEvent('mouseenter'))
+      sb.style.display = 'block'
+      var sr = sb.getBoundingClientRect()
+      var pr = picked.getBoundingClientRect()
+      ok('real-tile-menu-in-viewport',
+        sr.left >= M - 1 && sr.right <= vw - M + 1 && sr.top >= M - 1 && sr.bottom <= vh - M + 1,
+        'sub=' + [Math.round(sr.left), Math.round(sr.top), Math.round(sr.right), Math.round(sr.bottom)].join(','))
+      ok('real-tile-menu-hangs-on-row',
+        Math.min(sr.bottom, pr.bottom) - Math.max(sr.top, pr.top) > 0,
+        'overlap=' + Math.round(Math.min(sr.bottom, pr.bottom) - Math.max(sr.top, pr.top)))
+      KL.ui.closeMenu()
+    } catch (e) {
+      out.push('ERROR:' + e.message + ' @ ' + String(e.stack || '').split('\n')[1])
+    }
+    finish(out)
+  }
+
+  function finish (out) {
+    var fails = out.filter(function (s) { return s.indexOf('PASS') !== 0 }).length
+    var title = (fails ? 'FAILED ' + fails + ' | ' : 'ALL PASS | ') + out.join(' ; ')
+    document.title = title
+    logEl.textContent = title.split(' ; ').join('\n')
+  }
+  </script>
+</body>
+</html>

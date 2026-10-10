@@ -64,6 +64,7 @@ utools-shortcut-launcher/
 ├── tools/
 │   ├── ps-bridge.ps1      # 常驻 PowerShell 桥：图标提取 / lnk 解析 / 应用扫描
 │   ├── release.js         # 生成发布目录 dist/ 并做上架合规检查
+│   ├── uitest.html        # UI 回归测试（iframe 加载真实页面，校验菜单边界）
 │   ├── selftest.js        # 桥接层自测（图标/lnk/应用扫描）
 │   ├── smoke.js           # 渲染冒烟校验
 │   └── make-logo.py       # logo 生成脚本
@@ -121,7 +122,15 @@ node tools/selftest.js
 
 # 渲染冒烟校验（需 Chrome 可用，检查 DOM 结构）
 node tools/smoke.js <dump-dom-输出文件>
+
+# UI 回归测试：用 iframe 加载真实 index.html，在 782×524（模拟 uTools 窄窗口）下
+# 校验右键菜单二级菜单的边界处理
+chrome --headless=new --allow-file-access-from-files --virtual-time-budget=7000 \
+  --dump-dom "file:///<repo>/tools/uitest.html"
 ```
+
+`tools/uitest.html` 直接 iframe 引入 `../index.html`，断言结果写在 `document.title` 里，
+用 `--dump-dom` 回读即可；不复制页面结构，所以页面改了测试不会悄悄失效。
 
 ## 许可
 
