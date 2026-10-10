@@ -11,6 +11,10 @@
 </head>
 <body>
   <h2 style="font-size:14px;margin:8px 10px">UI 回归测试 —— 二级菜单越界（iframe 加载真实 index.html，782×524 模拟 uTools 窄窗口）</h2>
+  <p style="font-size:12px;margin:0 10px 8px;color:#666">
+    无头运行：<code>chrome --headless=new --allow-file-access-from-files --virtual-time-budget=6000 --dump-dom tools/uitest.html</code>
+    —— 结果写在 <code>&lt;title&gt;</code> 里。<code>--allow-file-access-from-files</code> 不能省，否则读不到 iframe 内容。
+  </p>
   <iframe id="frame" src="../index.html?theme=dark"></iframe>
   <div id="log"></div>
   <script>
@@ -25,9 +29,16 @@
     var out = []
     function ok (n, c, x) { out.push((c ? 'PASS' : 'FAIL') + ':' + n + (x ? '[' + x + ']' : '')) }
     try {
-      var W = frame.contentWindow
-      var D = frame.contentDocument
-      var KL = W.KL
+      var W, D, KL
+      try {
+        W = frame.contentWindow
+        D = frame.contentDocument
+        KL = W.KL                 // 第一次真读会触发跨域检查：file:// 下不同 origin 会被拦
+      } catch (e) {
+        out.push('ERROR:读不到 iframe 内容（跨域被拦）。file:// 下必须用 ' +
+          '--allow-file-access-from-files 启动 Chrome，或把本页放到本地 http 服务里打开')
+        return finish(out)
+      }
       if (!KL || !KL.ui) { out.push('ERROR:KL.ui 未加载'); return finish(out) }
 
       var vw = W.innerWidth, vh = W.innerHeight

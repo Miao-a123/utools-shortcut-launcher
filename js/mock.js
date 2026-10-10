@@ -331,6 +331,27 @@
           const f = KL.store.shortcuts.filter(function (s) { return s.kind === 'folder' })[0]
           if (!f) return
           KL.dialogs.folderView(f.id)
+        } else if (dlg === 'menu') {
+          /* 截图 / 回归用：在指定位置打开图标右键菜单，并把二级菜单强制展开。
+             无头截图无法触发 :hover，所以这里手动派发 mouseenter + 兜底 display:block。
+             用法：?dlg=menu&x=650&expand=图标尺寸 */
+          const sc = KL.store.shortcuts.filter(function (s) { return s.kind !== 'folder' })[0]
+          if (!sc) return
+          const rawX = Number(PARAMS.get('x'))
+          const x = isFinite(rawX) && PARAMS.get('x') !== null ? rawX : window.innerWidth - 130
+          KL.grid.showTileMenu(sc, x, Number(PARAMS.get('y')) || 140)
+          const want = PARAMS.get('expand') || '图标尺寸'
+          setTimeout(function () {
+            const rows = document.querySelectorAll('.ctx .item.has-sub')
+            for (let i = 0; i < rows.length; i++) {
+              if (rows[i].textContent.indexOf(want) >= 0) {
+                const sub = rows[i].querySelector('.sub')
+                rows[i].dispatchEvent(new MouseEvent('mouseenter'))
+                if (sub) sub.style.display = 'block'
+                break
+              }
+            }
+          }, 250)
         } else if (dlg === 'confirm') {
           KL.ui.confirm({ title: '删除快捷方式', text: '确定删除「VS Code」吗？', okText: '删除', danger: true })
         }

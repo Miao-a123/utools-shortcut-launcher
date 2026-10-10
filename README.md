@@ -31,6 +31,10 @@
 3. 保存后，在 uTools 搜索框输入「快捷方式」即可唤起主面板。
 
 > 浏览器预览：直接双击 `index.html` 打开也能看界面，此时自动进入 `mock` 模式（数据存于 `localStorage`，不触碰真实数据，方便快速预览样式与交互）。控制台执行 `localStorage.removeItem("kl-mock-data")` 可重置示例数据。
+>
+> 预览调试钩子（URL 参数）：`?dlg=scan|bookmarks|settings|add|edit|icon|folder|confirm` 直接打开对应弹窗；
+> `?dlg=menu&x=660&y=120&expand=图标尺寸` 在指定位置打开图标右键菜单并强制展开某个二级菜单
+> （无头截图里没法触发 `:hover`，所以用它来验证/出图菜单边界效果）；`?debug` 把主题与计算色写进 `document.title`；`?empty` 渲染空状态。
 
 ## 使用说明
 
@@ -131,6 +135,9 @@ chrome --headless=new --allow-file-access-from-files --virtual-time-budget=7000 
 
 `tools/uitest.html` 直接 iframe 引入 `../index.html`，断言结果写在 `document.title` 里，
 用 `--dump-dom` 回读即可；不复制页面结构，所以页面改了测试不会悄悄失效。
+
+> `--allow-file-access-from-files` 不能省：`file://` 下 iframe 与父页属于不同 origin，没有这个参数
+> 会直接报 `Blocked a frame with origin "null" from accessing a cross-origin frame`（测试会把这行原话印出来）。
 
 ## 许可
 

@@ -39,7 +39,9 @@
   - 40 项的超高子菜单被夹在 `6..518`（正好是 `100vh-12`），`scrollHeight=1210 > clientHeight=510`，滚动兜底生效
   - 端到端跑真实链路的 `KL.grid.showTileMenu()`，子菜单 `432,167 → 582,419` 全在视口内、与父项重叠 30px
 - 无头 Chrome 截图肉眼复核：二级菜单翻到主菜单左侧、底边与「图标尺寸」一行齐平，完整可见。
-- `node tools/release.js` 与 `node tools/smoke.js` 复跑通过（发布目录 12 文件 / 254 KB，20 个 tile 正常渲染）。
+- `node tools/release.js` 与 `node tools/smoke.js` 复跑通过（发布目录 12 文件 / 257 KB，20 个 tile 正常渲染）。
+- 为此加了截图/回归用的预览钩子 `?dlg=menu&x=660&y=120&expand=图标尺寸`（`js/mock.js`）：无头截图里没法触发 `:hover`，钩子会派发 `mouseenter` 并兜底 `display:block`，把指定二级菜单展开后出图，便于人工复核。
+- 顺手补掉测试自身的一个坑：`tools/uitest.html` 在 `file://` 下若缺 `--allow-file-access-from-files`，原来会直接抛 `Blocked a frame with origin "null" from accessing a cross-origin frame` 这种没法自查的原始错误；现在会把这句原话连同一行修复建议一起打进结果。
 
 ---
 
