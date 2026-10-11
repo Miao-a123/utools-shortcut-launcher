@@ -8,6 +8,68 @@
 
 ---
 
+## v1.6.0 — 新增「自动对齐 / 自由摆放」开关（2026-10-12）
+
+### 需求
+
+新增设置项「自动对齐」，默认开启：开启时移动图标会自动补齐空位（= 现有行为）；关闭后不自动补齐，图标按格子自由摆放。
+
+### 做了什么
+
+原来的布局模型里**没有坐标** —— 每个快捷方式只有 `col` / `row`（**跨度**，1~4），位置完全交给 CSS `grid-auto-flow: row dense` 按 DOM 顺序算出来。所以"自动补齐空位"不是一段逻辑，而是 CSS 的行为；要做到"不补齐、按格子自由摆放"，必须给每个图标真正的格子坐标。
+
+- **数据模型**（`js/store.js`）：新增 `x` / `y`（0 起的格子坐标，可空）。新增设置项 `autoAlign`（默认 `true`）。新增 `setPositions(map, silent)` / `setPosition(id, x, y)` / `clearPositions(ids)`。
+- **布局引擎**（`js/grid.js`）：
+  - `gridMetrics()`：列数不靠算术猜，直接读 `getComputedStyle(gridEl).gridTemplateColumns` 数 track 个数 —— `repeat(auto-fill, var(--cell))` 会按容器宽度解析成实际列表，最准。
+  - `makePacker(cols)`：占位登记 + `fits()` / `mark()` / `firstFree()` / `nearestFree()`。
+  - `layoutFree(list, m, existing)`：算出这一屏每个图标的落格。
+  - `cellFromPoint()`：鼠标坐标 → 格子号。
+  - `dropFree(ids, x, y)`：自由摆放下的落子。
+  - `repack()`：清掉位置让图标按当前顺序重新密排（供切换排序时用）。
+- **渲染**（`render()`）：自由摆放时给每个 tile 写 `gridColumn: (x+1) / span col`、`gridRow: (y+1) / span row`；自动对齐时行为与改动前完全一致。
+- **拖拽落点虚框**：新增 `.drop-cell` 元素。它本身就是 `.grid` 的子元素，所以直接给它 `grid-column` / `grid-row` 就能精确压在目标格上，不用把格子换算成像素。拖到大文件夹上时隐藏（那是"移入文件夹"的既有行为）。
+- **设置界面**（`js/dialogs.js`）：在「排列顺序」下面加了一行「自动对齐」，两个档：自动补齐 / 自由摆放。
+
+### 理由
+
+- **为什么必须引入真正的坐标，而不是只把 `dense` 去掉**：`grid-auto-flow: row`（不带 dense）只是不再让后面的小图标回填前面的空洞，图标仍然严格按 DOM 顺序流式排布 —— 做不到"把图标放到任意空格"。用户的诉求是后者。
+- **没有坐标的图标统一用"从 y=0 逐行扫的第一个空位"补位**：这正是 CSS `dense` 的算法。所以**从自动对齐切到自由摆放时画面完全不动**（回归测试里用像素矩形逐项比对过）—— 切换无感，用户不会觉得"开了个开关图标全乱了"。
+- **渲染时把没有坐标的图标就地钉住（`setPositions(pin, true)`，silent）**：这是开发过程中发现的关键坑。第一版只在拖拽时写坐标，其他图标仍是无坐标状态 —— 于是每次渲染都按当时的顺序给它们重新补位，**任何一个图标挪了格子，后面所有无坐标的图标都会跟着跳**（回归测试直接抓到：`collision-drop-does-not-move-others` 报出三个图标同时移位）。改成"渲染时把这一屏全部钉住"之后布局就是稳定的。
+  - `silent` 参数是必需的：`render()` 正跑到一半，如果 `setPositions` 抛出 `shortcuts` 事件，会重入 `render()` 把刚建好的节点冲掉。
+- **坐标只算不写回、窗口变窄时用夹取而不是改写数据**：用户把窗口拖窄时列数会变少，如果这时把"挤压后的位置"写回数据，把窗口拉宽也回不来了。现在的做法是渲染时临时夹取 / 下移，数据保持原样 —— 窗口变宽即复原（回归测试 `positions-survive-toggle`）。
+- **落子规则：落点格空着就精确落格；被占就找最近的空位**（按曼哈顿距离，再比 y 小、x 小）。否决了"和占用者交换位置"——多选拖拽、跨度不同的情况下交换的定义会变得很绕，而且"交换"意味着另一个图标也被动移动，违背"我只想挪这一个"。
+- **拖到大文件夹上仍然是"移入文件夹"**，不做落格。这是已经建立的交互，改掉反而危险；想放到文件夹旁边就拖到它周围的空格。
+- **`setParent` 进入文件夹时清掉 x/y**：文件夹内部的图标由文件夹自己的网格排布，留着旧坐标没有意义；移出来时重新找一个空位。
+- **切换「排列顺序」时重新密排**：自由摆放下位置是写死的，不重排的话按名称/时间排序完全看不出变化。用户按下排序键的意图就是"重排"，所以清掉坐标按新顺序重新密排。
+
+### 验证
+
+新增 `tools/layout-test.html`（iframe 加载真实 `index.html`，**26 条断言全 PASS**）：
+
+| 断言 | 说明 |
+|---|---|
+| `switch-to-free-keeps-layout` | 切到自由摆放后，20 个图标的像素矩形**逐个**与自动模式一致（不跳） |
+| `free-mode-uses-explicit-positions` / `free-mode-no-overlap` | 20/20 都有显式坐标；33 格占用无重叠 |
+| `drop-lands-on-target-cell` / `old-cell-left-empty` | 拖到空位精确落格；**原位置留空**（核心需求） |
+| `drop-does-not-move-others` / `collision-drop-does-not-move-others` / `multi-drop-does-not-move-others` | 三种落子（空位 / 被占 / 多选）都不影响其他图标 |
+| `drop-on-occupied-goes-somewhere-free` | 落点被占时挪到空位，且没压住占用者 |
+| `back-to-auto-restores-dense-layout` | 打开自动对齐后回到改变前的密排 |
+| `positions-survive-toggle` / `moved-tile-still-where-it-was-put` | 关掉再打开，摆好的位置原样回来 |
+| `sort-change-repacks-layout` / `repack-follows-name-order` / `repack-starts-at-origin` / `repack-is-dense` | 换排序会重排、顺序对、从左上角起排、无重叠 |
+| `position-cleared-when-into-folder` | 拖进文件夹后坐标清空 |
+
+另外用像素复核了截图：`#`/`.` 占用图显示自动模式 5 个图标全在第 1 行，自由摆放模式第 1 行第 5 列留空、被拖走的那一个停在第 3 行第 4 列。
+
+`uitest`（16）、`dedup-test`（16）、`tip-test`（20）全 PASS；`release.js`（12 文件 / 259 KB）与 `smoke.js`（20 tiles / 25 resize handles，与改动前一致）通过。
+
+### 已知边界
+
+- **自由摆放只在主网格生效**：大文件夹内部的图标、文件夹弹层（`.fv-grid`）仍按各自的网格自动排布。
+- **"全部"分类下近似**：坐标是「每个快捷方式一份」，而"全部"视图把各分类的图标混在一起显示，不同分类里摆到同一格的图标在"全部"视图中会被临时挤开（不写回数据，各自分类视图里位置不变）。
+- 窗口变窄时被临时挤开的图标，回到宽窗口会复原 —— 这是刻意的，但意味着**窄窗口下看到的排布不是真实排布**。
+
+---
+
 ## v1.5.3 — 无字模式下光标悬浮显示图标名称（2026-10-11）
 
 ### 问题

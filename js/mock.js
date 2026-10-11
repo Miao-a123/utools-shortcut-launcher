@@ -126,7 +126,7 @@
     return {
       version: 1,
       settings: {
-        showLabels: true, sortBy: 'manual', cell: 92, theme: 'auto', faviconService: '',
+        showLabels: true, autoAlign: true, sortBy: 'manual', cell: 92, theme: 'auto', faviconService: '',
         launchOnDoubleClick: false, confirmDelete: true, hideOnLaunch: true, tileRadius: 16
       },
       categories: cats,
@@ -199,9 +199,12 @@
       const theme = PARAMS.get('theme')
       // ?labels=0 直接进无字模式（截图 / 手工验证名称气泡用）
       const labels = PARAMS.get('labels')
+      // ?align=0 直接关掉自动对齐（自由摆放：截图 / 手工验证用）
+      const align = PARAMS.get('align')
       const over = {}
       if (theme) over.theme = theme
       if (labels !== null) over.showLabels = !(labels === '0' || labels === 'off' || labels === 'false')
+      if (align !== null) over.autoAlign = !(align === '0' || align === 'off' || align === 'false')
       try {
         const raw = localStorage.getItem(KEY)
         if (raw) {

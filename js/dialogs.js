@@ -8,9 +8,20 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.5.3'
+  const VERSION = '1.6.0'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.6.0',
+      date: '2026-10-12',
+      items: [
+        '新增设置项「自动对齐」（默认开启）：开启时图标总是往上补齐空位，拖动后自动挤紧；关闭后进入自由摆放，可以把图标放到任意空格，拖动后原来的位置就空着不再补上',
+        '自由摆放：拖动时会出现一个虚线格子显示落点；落在空位就放那儿，落在已被占用的格子上则自动挪到最近的空位，不会互相压住',
+        '自由摆放：拉大图标后原位放不下时会自动挪到最近的空位；把图标拖进文件夹会清掉它的格子位置（移出来时重新找空位）',
+        '自由摆放：切换「排列顺序」相当于按新顺序重新密排一次（位置是写死的，不重排的话换了排序也看不出变化）',
+        '两种模式随时切换：关闭再打开不会丢掉已经摆好的位置；窗口变窄时被临时挤开的图标，窗口变宽后会回到原位'
+      ]
+    },
     {
       v: '1.5.3',
       date: '2026-10-11',
@@ -1605,6 +1616,18 @@
       KL.app.syncToolbar()
     })
     body.appendChild(field('排列顺序', sortSeg))
+
+    const alignSeg = segmented([
+      { value: true, label: '自动补齐' },
+      { value: false, label: '自由摆放' }
+    ], s.autoAlign !== false, v => {
+      store.setSetting('autoAlign', v)
+      KL.app.syncToolbar()
+    })
+    body.appendChild(field('自动对齐', alignSeg,
+      '开启：图标总是往上补齐空位（拖动后自动挤紧）；' +
+      '关闭：按格子自由摆放，可以把图标放到任意空格、拖动后原地留空。' +
+      '关闭时「排列顺序」相当于重新密排一次。'))
 
     const sizeRange = el('input')
     sizeRange.type = 'range'

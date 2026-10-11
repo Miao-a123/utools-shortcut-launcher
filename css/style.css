@@ -288,6 +288,19 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
 .tile.folder { overflow: hidden; }
 .tile.drop-into { border-color: var(--accent) !important; background: var(--accent-soft) !important; }
 
+/* ---------------- 自由摆放（关闭「自动对齐」） ----------------
+   拖拽时的落点虚框。它本身就是 .grid 的子元素，所以直接给它 grid-column /
+   grid-row 就能精确压在目标格子上，不用换算成像素。 */
+
+.drop-cell {
+  pointer-events: none;
+  border-radius: var(--tile-radius);
+  border: 1px dashed var(--accent);
+  background: var(--accent-soft);
+}
+/* 自由摆放时每个图标都用显式格子坐标落位，dense 补位不再参与 */
+.grid.free-layout { grid-auto-flow: row; }
+
 .tile .folder-face {
   width: 100%; height: 100%;
   border-radius: 22%;

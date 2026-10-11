@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>layout-test</title>
+  <style>
+    body { margin: 0; font: 13px/1.6 system-ui, sans-serif; background: #fff; color: #111 }
+    #frame { width: 782px; height: 524px; border: 1px solid #ccc; display: block }
+    #log { padding: 8px 10px; white-space: pre-wrap; font-family: monospace; font-size: 12px }
+  </style>
+</head>
+<body>
+  <h2 style="font-size:14px;margin:8px 10px">自动对齐 / 自由摆放回归测试</h2>
+  <p style="font-size:12px;margin:0 10px 8px;color:#666">
+    无头运行：<code>chrome --headless=new --allow-file-access-from-files --virtual-time-budget=8000 --dump-dom tools/layout-test.html</code>
+    接 <code>&lt;title&gt;</code> 看结果。<code>--allow-file-access-from-files</code> 不能省。
+  </p>
+  <iframe id="frame" src="../index.html?theme=dark"></iframe>
+  <div id="log"></div>
+  <script>
+  var frame = document.getElementById('frame')
+  var logEl = document.getElementById('log')
+
+  frame.addEventListener('load', function () { setTimeout(run, 900) })
+
+  function run () {
+    var out = []
+    function ok (n, c, x) { out.push((c ? 'PASS' : 'FAIL') + ':' + n + (x ? '[' + x + ']' : '')) }
+    function sleep (ms) { return new Promise(function (r) { setTimeout(r, ms) }) }
+
+    var W, D, KL
+    try {
+      W = frame.contentWindow
+      D = frame.contentDocument
+      KL = W.KL
+    } catch (e) {
+      out.push('ERROR:读不到 iframe 内容（跨域被拦）。file:// 下必须用 --allow-file-access-from-files')
+      return finish(out)
+    }
+    if (!KL || !KL.grid || !KL.grid.dropFree) { out.push('ERROR:KL.grid.dropFree 不存在'); return finish(out) }
+
+    var gridEl = D.getElementById('grid')
+
+    function tiles () { return Array.prototype.slice.call(gridEl.querySelectorAll('.tile[data-id]')) }
+    function byId (id) { return gridEl.querySelector('.tile[data-id="' + id + '"]') }
+    // 把每个 tile 的位置拍成快照：既记像素矩形，也记解析出来的格子号。
+    // 注意跨列跨度不能读 gridColumnEnd —— "span 2" 这种计算值 parseInt 出来是 NaN，
+    // 所以跨度统一由像素尺寸反推。
+    function snapshot () {
+      var snap = {}
+      var m = KL.grid.gridMetrics()
+      var step = m.cell + m.gap
+      tiles().forEach(function (t) {
+        var r = t.getBoundingClientRect()
+        var cs = W.getComputedStyle(t)
+        snap[t.dataset.id] = {
+          left: Math.round(r.left), top: Math.round(r.top),
+          w: Math.round(r.width), h: Math.round(r.height),
+          colStart: parseInt(cs.gridColumnStart, 10),
+          rowStart: parseInt(cs.gridRowStart, 10),
+          spanCol: Math.max(1, Math.round((r.width + m.gap) / step)),
+          spanRow: Math.max(1, Math.round((r.height + m.gap) / step))
+        }
+      })
+      return snap
+    }
+    function sameRects (a, b, skip) {
+      var bad = []
+      for (var id in a) {
+        if (skip && skip.indexOf(id) >= 0) continue
+        var x = a[id], y = b[id]
+        if (!y) { bad.push(id + ':missing'); continue }
+        if (x.left !== y.left || x.top !== y.top || x.w !== y.w || x.h !== y.h) {
+          bad.push(id + ' ' + x.left + ',' + x.top + '→' + y.left + ',' + y.top)
+        }
+      }
+      return bad
+    }
+    // 某个格子上有没有被占（按像素矩形判断，跟 CSS 实际落位一致）
+    function occupiedAt (snap, cx, cy) {
+      var m = KL.grid.gridMetrics()
+      var r = gridEl.getBoundingClientRect()
+      var gx = r.left + cx * (m.cell + m.gap)
+      var gy = r.top + cy * (m.cell + m.gap)
+      for (var id in snap) {
+        var s = snap[id]
+        if (gx >= s.left - 2 && gx < s.left + s.w - 2 && gy >= s.top - 2 && gy < s.top + s.h - 2) return id
+      }
+      return null
+    }
+    function cellStarts (snap, id) {
+      var s = snap[id]
+      return { x: s.colStart - 1, y: s.rowStart - 1 }
+    }
+    function clientOf (cx, cy) {
+      var m = KL.grid.gridMetrics()
+      var r = gridEl.getBoundingClientRect()
+      return {
+        x: r.left + cx * (m.cell + m.gap) + m.cell / 2,
+        y: r.top + cy * (m.cell + m.gap) + m.cell / 2,
+        m: m
+      }
+    }
+    function visibleIds () {
+      var list = []
+      tiles().forEach(function (t) { list.push(t.dataset.id) })
+      return list
+    }
+    function biggestFreeGap (snap, col, row) {
+      var m = KL.grid.gridMetrics()
+      for (var y = 0; y < 8; y++) {
+        for (var x = 0; x + col <= m.cols; x++) {
+          var free = true
+          for (var dy = 0; dy < row && free; dy++) {
+            for (var dx = 0; dx < col; dx++) {
+              if (occupiedAt(snap, x + dx, y + dy)) { free = false; break }
+            }
+          }
+          if (free) return { x: x, y: y }
+        }
+      }
+      return null
+    }
+
+    // 从干净状态开始：位置全清、自动对齐打开
+    KL.store.clearPositions()
+    KL.store.setSetting('autoAlign', true)
+
+    sleep(120).then(function () {
+      var ids = visibleIds()
+      ok('tiles-rendered', ids.length > 5, ids.length + ' tiles')
+      var m = KL.grid.gridMetrics()
+      ok('cols-detected', m.cols >= 3, 'cols=' + m.cols)
+
+      var autoSnap = snapshot()
+      var autoArea = byId(ids[2]).style.gridArea || byId(ids[2]).style.gridColumn
+      ok('auto-mode-has-no-explicit-start', autoArea.indexOf('span') === 0 || autoArea === '',
+        JSON.stringify(autoArea))
+
+      // ① 切到自由摆放：画面不能跳（密排结果要和 CSS dense 一致）
+      KL.store.setSetting('autoAlign', false)
+      return sleep(150).then(function () {
+        var freeSnap = snapshot()
+        var diff = sameRects(autoSnap, freeSnap)
+        ok('switch-to-free-keeps-layout', diff.length === 0, diff.slice(0, 3).join(' / '))
+
+        var explicit = 0
+        tiles().forEach(function (t) {
+          var cs = W.getComputedStyle(t)
+          if (parseInt(cs.gridColumnStart, 10) >= 1 && parseInt(cs.gridRowStart, 10) >= 1) explicit++
+        })
+        ok('free-mode-uses-explicit-positions', explicit === ids.length, explicit + '/' + ids.length)
+
+        // ② 无叠放：所有格子的占用面积之和 == 格子总面积
+        var cells = 0
+        var area = {}
+        for (var id in freeSnap) {
+          var s = freeSnap[id]
+          for (var x = s.colStart; x < s.colStart + s.spanCol; x++) {
+            for (var y = s.rowStart; y < s.rowStart + s.spanRow; y++) {
+              area[x + ',' + y] = (area[x + ',' + y] || 0) + 1
+              cells++
+            }
+          }
+        }
+        var overlaps = 0
+        for (var k in area) if (area[k] > 1) overlaps++
+        ok('free-mode-no-overlap', overlaps === 0, 'overlaps=' + overlaps + ' cells=' + cells)
+
+        // ③ 拖到一个空格：精确落在目标格，且别的图标不动
+        var mover = ids[ids.length - 1]
+        var before = snapshot()
+        var gap = biggestFreeGap(before, 1, 1)
+        ok('found-free-cell', !!gap, gap ? gap.x + ',' + gap.y : 'none')
+        var p = clientOf(gap.x, gap.y)
+        var oldCell = cellStarts(before, mover)
+        KL.grid.dropFree([mover], p.x, p.y)
+        return sleep(60).then(function () {
+          var after = snapshot()
+          var at = cellStarts(after, mover)
+          ok('drop-lands-on-target-cell', at.x === gap.x && at.y === gap.y,
+            'want=' + gap.x + ',' + gap.y + ' got=' + at.x + ',' + at.y)
+          var moved = sameRects(before, after, [mover])
+          ok('drop-does-not-move-others', moved.length === 0, moved.slice(0, 3).join(' / '))
+          // 原位置必须留空（"不自动补齐"）
+          ok('old-cell-left-empty', !occupiedAt(after, oldCell.x, oldCell.y),
+            'old=' + oldCell.x + ',' + oldCell.y + ' occupant=' + occupiedAt(after, oldCell.x, oldCell.y))
+          ok('position-persisted', KL.store.getShortcut(mover).x === gap.x && KL.store.getShortcut(mover).y === gap.y,
+            KL.store.getShortcut(mover).x + ',' + KL.store.getShortcut(mover).y)
+
+          // ④ 拖到被占的格子 → 落到最近的空位，不叠放
+          var occupant = ids[0]
+          var occupiedCell = cellStarts(snapshot(), occupant)
+          var freeCellId = ids[1]
+          // 找一个确定被占的格子（用 occupant 的左上角）
+          var q = clientOf(occupiedCell.x, occupiedCell.y)
+          var before2 = snapshot()
+          KL.grid.dropFree([freeCellId], q.x, q.y)
+          return sleep(60).then(function () {
+            var after2 = snapshot()
+            var at2 = cellStarts(after2, freeCellId)
+            var still = occupiedAt(after2, occupiedCell.x, occupiedCell.y)
+            ok('drop-on-occupied-goes-somewhere-free',
+              !(at2.x === occupiedCell.x && at2.y === occupiedCell.y),
+              'at=' + at2.x + ',' + at2.y + ' occupiedBy=' + still)
+            ok('no-overlap-after-collision-drop', still === occupant,
+              'occupant=' + occupant + ' got=' + still)
+            var bad2 = sameRects(before2, after2, [freeCellId])
+            ok('collision-drop-does-not-move-others', bad2.length === 0, bad2.slice(0, 3).join(' / '))
+
+            // ⑤ 多选一起拖 → 各占一个不同的格子
+            var three = ids.slice(0, 3)
+            var before3 = snapshot()
+            var gap3 = biggestFreeGap(before3, 1, 1)
+            var p3 = clientOf(gap3.x, gap3.y)
+            KL.grid.dropFree(three, p3.x, p3.y)
+            return sleep(60).then(function () {
+              var after3 = snapshot()
+              var seen = {}
+              var dup = 0
+              three.forEach(function (id) {
+                var c = cellStarts(after3, id)
+                var k = c.x + ',' + c.y
+                if (seen[k]) dup++
+                seen[k] = 1
+              })
+              ok('multi-drop-distinct-cells', dup === 0, JSON.stringify(seen))
+              var bad3 = sameRects(before3, after3, three)
+              ok('multi-drop-does-not-move-others', bad3.length === 0, bad3.slice(0, 3).join(' / '))
+
+              // ⑥ 打开自动对齐 → 回到密排，空洞消失
+              var freeSnap2 = snapshot()
+              KL.store.setSetting('autoAlign', true)
+              return sleep(150).then(function () {
+                var autoSnap2 = snapshot()
+                var d2 = sameRects(autoSnap, autoSnap2)
+                ok('back-to-auto-restores-dense-layout', d2.length === 0, d2.slice(0, 3).join(' / '))
+                var explicitLeft = 0
+                tiles().forEach(function (t) {
+                  if (/^\d/.test(String(t.style.gridColumn || ''))) explicitLeft++
+                })
+                ok('auto-mode-drops-explicit-positions', explicitLeft === 0, String(explicitLeft))
+
+                // ⑦ 再关掉 → 之前摆好的位置原样回来
+                KL.store.setSetting('autoAlign', false)
+                return sleep(150).then(function () {
+                  var again = snapshot()
+                  var d3 = sameRects(freeSnap2, again)
+                  ok('positions-survive-toggle', d3.length === 0, d3.slice(0, 3).join(' / '))
+                  var at3 = cellStarts(again, mover)
+                  ok('moved-tile-still-where-it-was-put', at3.x === gap.x && at3.y === gap.y,
+                    'want=' + gap.x + ',' + gap.y + ' got=' + at3.x + ',' + at3.y)
+
+                  // ⑧ 自由摆放下换排序方式 → 位置全部重算一遍
+                  var beforeSort = snapshot()
+                  var order = null
+                  KL.store.setSetting('sortBy', 'name')
+                  return sleep(200).then(function () {
+                    var repacked = snapshot()
+                    var changed = sameRects(beforeSort, repacked)
+                    ok('sort-change-repacks-layout', changed.length > 0,
+                      changed.length + ' tiles moved')
+                    order = tiles().map(function (t) { return t.textContent.trim() })
+                    var sorted = order.slice().sort(function (a, b) {
+                      return a.localeCompare(b, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' })
+                    })
+                    ok('repack-follows-name-order',
+                      order.slice(0, 6).join('|') === sorted.slice(0, 6).join('|'),
+                      order.slice(0, 4).join(' / '))
+                    var m2 = KL.grid.gridMetrics()
+                    var firstId = tiles()[0].dataset.id
+                    var first = cellStarts(repacked, firstId)
+                    ok('repack-starts-at-origin', first.x === 0 && first.y === 0,
+                      firstId + '=' + first.x + ',' + first.y + ' cols=' + m2.cols)
+                    ok('repack-is-dense', (function () {
+                      var occ = {}
+                      for (var id2 in repacked) {
+                        var s2 = repacked[id2]
+                        for (var x2 = s2.colStart; x2 < s2.colStart + s2.spanCol; x2++) {
+                          for (var y2 = s2.rowStart; y2 < s2.rowStart + s2.spanRow; y2++) {
+                            occ[x2 + ',' + y2] = (occ[x2 + ',' + y2] || 0) + 1
+                          }
+                        }
+                      }
+                      var over = 0
+                      for (var k2 in occ) if (occ[k2] > 1) over++
+                      return over === 0
+                    })(), 'overlaps=0')
+                    KL.store.setSetting('sortBy', 'manual')
+
+                    // ⑨ 拖进文件夹 → 位置清掉
+                    return sleep(80).then(function () {
+                      var folderEl = gridEl.querySelector('.tile.folder')
+                      var fid = folderEl.dataset.id
+                      var victim = gridEl.querySelector('.tile[data-id]:not(.folder)').dataset.id
+                      KL.grid.dropFree([victim], 0, 0)     // 先给它一个位置
+                      ok('victim-has-position', KL.store.getShortcut(victim).x !== null)
+                      KL.store.setParent([victim], fid)
+                      ok('position-cleared-when-into-folder',
+                        KL.store.getShortcut(victim).x === null && KL.store.getShortcut(victim).y === null,
+                        KL.store.getShortcut(victim).x + ',' + KL.store.getShortcut(victim).y)
+                      finish(out)
+                    })
+                  })
+                })
+              })
+            })
+          })
+        })
+      })
+    }).catch(function (e) {
+      out.push('ERROR:' + e.message + ' @ ' + String(e.stack || '').split('\n')[1])
+      finish(out)
+    })
+  }
+
+  function finish (out) {
+    var fails = out.filter(function (s) { return s.indexOf('PASS') !== 0 }).length
+    var title = (fails ? 'FAILED ' + fails + ' | ' : 'ALL PASS | ') + out.join(' ; ')
+    document.title = title
+    logEl.textContent = title.split(' ; ').join('\n')
+  }
+  </script>
+</body>
+</html>

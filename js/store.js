@@ -6,6 +6,7 @@
 
   const DEFAULT_SETTINGS = {
     showLabels: true,
+    autoAlign: true,
     sortBy: 'manual',
     cell: 92,
     sidebarWidth: 184,
@@ -53,6 +54,12 @@
   function normalizeShortcut (s) {
     const now = Date.now()
     const launch = s.launch || {}
+    // x / y 是「自由摆放」（关闭自动对齐）时的格子坐标，0 起。
+    // 没存过就是 null —— 表示"还没有指定位置"，渲染时按现有顺序补一个空位。
+    const pos = v => {
+      const n = parseInt(v, 10)
+      return Number.isFinite(n) && n >= 0 ? n : null
+    }
     return {
       id: s.id || uid('sc'),
       kind: s.kind === 'folder' ? 'folder' : 'shortcut',
@@ -62,6 +69,8 @@
       categoryId: s.categoryId || null,
       col: Math.max(1, Math.min(4, parseInt(s.col, 10) || 1)),
       row: Math.max(1, Math.min(4, parseInt(s.row, 10) || 1)),
+      x: pos(s.x),
+      y: pos(s.y),
       launch: {
         kind: launch.kind || 'path',
         target: launch.target || '',
@@ -256,6 +265,62 @@
     return updateShortcut(id, { categoryId: categoryId || null })
   }
 
+  /* ---------------- 自由摆放的格子坐标 ----------------
+     x / y 是 0 起的格子坐标（左上角），只在「关闭自动对齐」时用来落格。
+     自动对齐打开时这些值只存不用，所以来回切开关不会丢掉已经摆好的位置。 */
+
+  function posNum (v) {
+    const n = parseInt(v, 10)
+    return Number.isFinite(n) && n >= 0 ? n : null
+  }
+
+  /* silent = true 时只存盘不发事件。
+     网格渲染时要把"还没有坐标"的图标钉到当前算出来的格子上，但渲染正跑到一半，
+     再抛一个 shortcuts 事件进去会重入 render 把刚建好的节点冲掉。 */
+  function setPositions (map, silent) {
+    let changed = false
+    for (const id in map) {
+      const s = getShortcut(id)
+      if (!s) continue
+      const p = map[id]
+      const x = p ? posNum(p.x) : null
+      const y = p ? posNum(p.y) : null
+      if (s.x !== x || s.y !== y) {
+        s.x = x
+        s.y = y
+        s.updatedAt = Date.now()
+        changed = true
+      }
+    }
+    if (changed) {
+      save()
+      if (!silent) emit('shortcuts')
+    }
+    return changed
+  }
+
+  function setPosition (id, x, y) {
+    return setPositions({ [id]: { x: x, y: y } })
+  }
+
+  // ids 省略时清全部
+  function clearPositions (ids) {
+    const set = ids ? new Set(ids) : null
+    let changed = false
+    for (const s of state.shortcuts) {
+      if (set && !set.has(s.id)) continue
+      if (s.x === null && s.y === null) continue
+      s.x = null
+      s.y = null
+      changed = true
+    }
+    if (changed) {
+      save()
+      emit('shortcuts')
+    }
+    return changed
+  }
+
   function findByTarget (target) {
     if (!target) return null
     const low = String(target).toLowerCase()
@@ -400,6 +465,8 @@
       if (!s || s.id === pid) continue
       if (s.kind === 'folder' && pid) continue   // 文件夹不允许嵌套
       s.parentId = pid
+      // 进入文件夹后不再占主网格的格子；位置清掉，移出来时重新找一个空位
+      if (pid) { s.x = null; s.y = null }
       s.updatedAt = Date.now()
     }
     save()
@@ -564,6 +631,9 @@
     dissolveFolder,
     folderOf,
     setCategory,
+    setPositions,
+    setPosition,
+    clearPositions,
     findByTarget,
     findByUrl,
     findByLaunch,

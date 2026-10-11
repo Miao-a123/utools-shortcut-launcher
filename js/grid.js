@@ -43,6 +43,209 @@
     node.addEventListener('mouseleave', () => KL.ui.tip.hide())
   }
 
+  /* ---------------- 自由摆放（关闭「自动对齐」时生效） ----------------
+     自动对齐开着时，图标靠 CSS grid 的 `grid-auto-flow: row dense` 排布，
+     永远往上补齐空位；关掉以后每个图标按存下来的 (x, y) 明确落格，可以留空洞。
+
+     坐标只在这里算、不往数据里回写：
+       · 避免"渲染 → 存盘 → 再渲染"打转；
+       · 窗口变窄导致的临时挤压也不会破坏用户已经摆好的位置（窗口变宽就复原）。 */
+
+  const GRID_GAP = 10
+
+  function freeMode () {
+    return store.settings.autoAlign === false
+  }
+
+  function gridMetrics () {
+    const cell = currentCell()
+    let cols = 0
+    try {
+      // repeat(auto-fill, …) 会按容器宽度解析成实际 track 列表，数一下就是列数
+      const tpl = window.getComputedStyle(gridEl).gridTemplateColumns
+      if (tpl && tpl !== 'none') cols = tpl.trim().split(/\s+/).filter(Boolean).length
+    } catch (e) {}
+    if (!cols) cols = Math.floor(((gridEl.clientWidth || 0) + GRID_GAP) / (cell + GRID_GAP))
+    return { cell: cell, gap: GRID_GAP, cols: Math.max(1, cols) }
+  }
+
+  // 占位登记 + 找空位。列数变化时会被重新构造，所以不缓存状态。
+  function makePacker (cols) {
+    const occupied = new Set()
+    const K = (x, y) => x + ',' + y
+
+    function fits (x, y, col, row) {
+      if (x < 0 || y < 0 || x + col > cols) return false
+      for (let dy = 0; dy < row; dy++) {
+        for (let dx = 0; dx < col; dx++) if (occupied.has(K(x + dx, y + dy))) return false
+      }
+      return true
+    }
+    function mark (x, y, col, row) {
+      for (let dy = 0; dy < row; dy++) {
+        for (let dx = 0; dx < col; dx++) occupied.add(K(x + dx, y + dy))
+      }
+    }
+    // 从 y=0 起逐行扫出来的第一个空位 —— 和 CSS grid-auto-flow: row dense 的结果一致，
+    // 所以"从自动对齐切到自由摆放"时画面不会跳。
+    function firstFree (col, row) {
+      for (let y = 0; y < 500; y++) {
+        for (let x = 0; x + col <= cols; x++) if (fits(x, y, col, row)) return { x: x, y: y }
+      }
+      return { x: 0, y: 0 }
+    }
+    // 离落点最近的空位：先比曼哈顿距离，再比 y 小、x 小
+    function nearestFree (tx, ty, col, row) {
+      let best = null
+      let bestD = Infinity
+      for (let y = 0; y <= ty + 40; y++) {
+        for (let x = 0; x + col <= cols; x++) {
+          if (!fits(x, y, col, row)) continue
+          const d = Math.abs(x - tx) + Math.abs(y - ty)
+          if (d < bestD) { bestD = d; best = { x: x, y: y } }
+        }
+      }
+      return best || firstFree(col, row)
+    }
+    return { cols: cols, fits: fits, mark: mark, firstFree: firstFree, nearestFree: nearestFree }
+  }
+
+  /* 算出这一屏每个顶层图标的实际落格。existing 传进来时会在它的占位上继续排
+     （拖拽时用它把"其他图标已经占了哪些格子"带进来）。 */
+  function layoutFree (list, m, existing) {
+    const p = existing || makePacker(m.cols)
+    const pos = {}
+    for (const sc of list) {
+      const col = clamp(sc.col || 1, 1, m.cols)
+      const row = Math.max(1, sc.row || 1)
+      let x
+      let y
+      if (sc.x == null || sc.y == null) {
+        // 新增的图标 / 刚从自动对齐切过来 —— 补第一个空位
+        const f = p.firstFree(col, row)
+        x = f.x
+        y = f.y
+      } else {
+        x = clamp(sc.x, 0, Math.max(0, m.cols - col))    // 窗口变窄先夹回来（不写回数据）
+        y = sc.y
+        if (!p.fits(x, y, col, row)) {
+          let ok = false
+          for (let yy = y + 1; yy < y + 200 && !ok; yy++) {
+            if (p.fits(x, yy, col, row)) { y = yy; ok = true }
+          }
+          if (!ok) { const f = p.firstFree(col, row); x = f.x; y = f.y }
+        }
+      }
+      p.mark(x, y, col, row)
+      pos[sc.id] = { x: x, y: y }
+    }
+    return pos
+  }
+
+  // 鼠标落在第几格（左上角对齐）
+  function cellFromPoint (clientX, clientY, m) {
+    const r = gridEl.getBoundingClientRect()
+    const step = m.cell + m.gap
+    return {
+      x: Math.max(0, Math.floor((clientX - r.left) / step)),
+      y: Math.max(0, Math.floor((clientY - r.top) / step))
+    }
+  }
+
+  /* ---------------- 拖拽落点虚框（自由摆放） ---------------- */
+
+  let ghostEl = null
+  let ghostPacker = null
+  let ghostMetrics = null
+
+  function hideGhost () {
+    if (ghostEl && ghostEl.parentNode) ghostEl.parentNode.removeChild(ghostEl)
+    ghostEl = null
+    ghostPacker = null
+    ghostMetrics = null
+  }
+
+  // 拖拽开始时先把"其他图标的占位"打包好，dragover 时只需要算光标落在哪一格
+  function prepareGhost (ids) {
+    if (!freeMode()) { hideGhost(); return }
+    const m = gridMetrics()
+    const others = store.visible(currentCategory, keyword).filter(s => ids.indexOf(s.id) < 0)
+    const p = makePacker(m.cols)
+    layoutFree(others, m, p)
+    ghostPacker = p
+    ghostMetrics = m
+  }
+
+  function ghostAt (e) {
+    if (!freeMode() || !ghostPacker || !dragHint) return
+    // 拖到大文件夹上 = 移入文件夹（既有行为），这时不显示落格虚框
+    if (e.target && e.target.closest && e.target.closest('.tile.folder')) return hideGhost()
+    const sc = store.getShortcut(dragHint.ids[0])
+    if (!sc) return
+    const m = ghostMetrics
+    const col = clamp(sc.col || 1, 1, m.cols)
+    const row = Math.max(1, sc.row || 1)
+    const c = cellFromPoint(e.clientX, e.clientY, m)
+    const free = ghostPacker.nearestFree(c.x, c.y, col, row)
+    if (!ghostEl) {
+      ghostEl = el('div', 'drop-cell')
+      gridEl.appendChild(ghostEl)
+    }
+    ghostEl.style.gridColumn = (free.x + 1) + ' / span ' + col
+    ghostEl.style.gridRow = (free.y + 1) + ' / span ' + row
+  }
+
+  /* 自由摆放下的落子：把拖动的图标放到落点格；该格被占就找最近的空位。 */
+  function dropFree (ids, clientX, clientY) {
+    const list = ids.filter(id => store.getShortcut(id))
+    if (!list.length) return
+    const m = gridMetrics()
+    const others = store.visible(currentCategory, keyword).filter(s => list.indexOf(s.id) < 0)
+    const p = makePacker(m.cols)
+    layoutFree(others, m, p)
+    const c = cellFromPoint(clientX, clientY, m)
+    const map = {}
+    store.batch(() => {
+      store.setParent(list, null)          // 落回主网格（从文件夹里拖出来的情况）
+      list.forEach(id => {
+        const sc = store.getShortcut(id)
+        if (!sc) return
+        const col = clamp(sc.col || 1, 1, m.cols)
+        const row = Math.max(1, sc.row || 1)
+        const free = p.nearestFree(c.x, c.y, col, row)
+        p.mark(free.x, free.y, col, row)
+        map[id] = free
+      })
+      store.setPositions(map)
+    })
+    hideGhost()
+    render()
+  }
+
+  /* 改尺寸后原位可能放不下（压到别人 / 超出当前列数）→ 挪到最近的空位。
+     只在 store.batch() 里调用，不自己 render。 */
+  function settleFree (id) {
+    const sc = store.getShortcut(id)
+    if (!sc) return
+    const m = gridMetrics()
+    const others = store.visible(currentCategory, keyword).filter(s => s.id !== id)
+    const p = makePacker(m.cols)
+    layoutFree(others, m, p)
+    const col = clamp(sc.col || 1, 1, m.cols)
+    const row = Math.max(1, sc.row || 1)
+    const x = clamp(sc.x == null ? 0 : sc.x, 0, Math.max(0, m.cols - col))
+    const y = sc.y == null ? 0 : sc.y
+    if (p.fits(x, y, col, row)) return
+    store.setPositions({ [id]: p.nearestFree(x, y, col, row) })
+  }
+
+  /* 位置全部重算一遍：清掉坐标后触发 render，render 会按当前顺序重新密排并钉住。
+     自由摆放时切换「排列顺序」用它 —— 否则位置是写死的，按名称排序看不到任何变化。 */
+  function repack () {
+    const list = store.visible(currentCategory, keyword).map(s => s.id)
+    store.clearPositions(list)
+  }
+
   function currentCell () {
     return clamp(parseInt(store.settings.cell, 10) || 92, 64, 160)
   }
@@ -177,9 +380,11 @@
       e.dataTransfer.effectAllowed = 'move'
       setTimeout(() => { for (const id of ids) if (tileNodes[id]) tileNodes[id].classList.add('dragging') }, 0)
       dragHint = { ids: ids }
+      prepareGhost(ids)
     })
     tile.addEventListener('dragend', () => {
       clearDropHints()
+      hideGhost()
       for (const k in tileNodes) tileNodes[k].classList.remove('dragging')
       dragHint = null
     })
@@ -191,6 +396,7 @@
       e.preventDefault()
       e.stopPropagation()
       e.dataTransfer.dropEffect = 'move'
+      hideGhost()                                  // 落在文件夹上 = 移入，不显示落格虚框
       clearDropHints()
       tile.classList.add('drop-into')
     })
@@ -259,9 +465,11 @@
       e.dataTransfer.effectAllowed = 'move'
       setTimeout(() => { for (const id of ids) if (tileNodes[id]) tileNodes[id].classList.add('dragging') }, 0)
       dragHint = { ids: ids }
+      prepareGhost(ids)        // 拖出文件夹时也能看到落格虚框
     })
     tile.addEventListener('dragend', e => {
       clearDropHints()
+      hideGhost()
       for (const k in tileNodes) tileNodes[k].classList.remove('dragging')
       dragHint = null
     })
@@ -320,19 +528,26 @@
       const baseRow = sc.row
       let col = baseCol
       let row = baseRow
-      const maxCol = Math.max(1, Math.floor((contentEl.clientWidth - 4) / step))
+      const info = freeResizeInfo(tile)
+      const capCol = Math.min(4, Math.max(1, Math.floor((contentEl.clientWidth - 4) / step)), info.maxCol)
       const onMove = ev => {
-        col = clamp(baseCol + Math.round((ev.clientX - startX) / step), 1, Math.min(4, Math.max(1, maxCol)))
+        col = clamp(baseCol + Math.round((ev.clientX - startX) / step), 1, capCol)
         row = clamp(baseRow + Math.round((ev.clientY - startY) / step), 1, 4)
-        tile.style.gridColumn = 'span ' + col
-        tile.style.gridRow = 'span ' + row
+        tile.style.gridColumn = info.startCol ? info.startCol + ' / span ' + col : 'span ' + col
+        tile.style.gridRow = info.startRow ? info.startRow + ' / span ' + row : 'span ' + row
       }
       const onUp = () => {
         document.removeEventListener('mousemove', onMove)
         document.removeEventListener('mouseup', onUp)
         document.body.style.cursor = ''
-        if (col !== sc.col || row !== sc.row) store.updateShortcut(sc.id, { col: col, row: row })
-        else render()
+        if (col !== sc.col || row !== sc.row) {
+          store.batch(() => {
+            store.updateShortcut(sc.id, { col: col, row: row })
+            if (freeMode()) settleFree(sc.id)
+          })
+        } else {
+          render()
+        }
       }
       document.body.style.cursor = 'nwse-resize'
       document.addEventListener('mousemove', onMove)
@@ -449,13 +664,38 @@
     const list = store.visible(currentCategory, keyword)
     gridEl.style.setProperty('--cell', currentCell() + 'px')
     gridEl.classList.toggle('hide-labels', !settings.showLabels)
+    gridEl.classList.toggle('free-layout', settings.autoAlign === false)
     // 重渲染会把正在悬浮的节点换掉，mouseleave 不会再触发 —— 主动收起气泡
     KL.ui.tip.hide()
+    hideGhost()
     gridEl.innerHTML = ''
     for (const k in tileNodes) delete tileNodes[k]
 
+    // 自由摆放：先把这一屏的落格算出来，再把每个图标明确摆到对应格子上
+    const m = settings.autoAlign === false ? gridMetrics() : null
+    const pos = m ? layoutFree(list, m) : null
+
+    if (pos) {
+      // 关键：把"还没有坐标"的图标就地钉住。
+      // 否则每次渲染都会按当时的顺序给它们重新补空位 —— 一旦别的图标挪了格子，
+      // 这些图标就会跟着跳，看起来像"自由摆放不管用"。
+      // 钉完之后 render 就退化成纯读，不会反复触发（用 silent 就是为此：渲染途中
+      // 再抛一个 shortcuts 事件会把刚建好的节点冲掉）。
+      const pin = {}
+      let needPin = false
+      for (const sc of list) {
+        if (sc.x == null || sc.y == null) { pin[sc.id] = pos[sc.id]; needPin = true }
+      }
+      if (needPin) store.setPositions(pin, true)
+    }
+
     for (const sc of list) {
       const node = sc.kind === 'folder' ? buildFolderTile(sc) : buildTile(sc)
+      if (pos) {
+        const p = pos[sc.id]
+        node.style.gridColumn = (p.x + 1) + ' / span ' + clamp(sc.col || 1, 1, m.cols)
+        node.style.gridRow = (p.y + 1) + ' / span ' + Math.max(1, sc.row || 1)
+      }
       gridEl.appendChild(node)
       tileNodes[sc.id] = node
     }
@@ -541,17 +781,21 @@
       e.dataTransfer.effectAllowed = 'move'
       setTimeout(() => { for (const id of ids) if (tileNodes[id]) tileNodes[id].classList.add('dragging') }, 0)
       dragHint = { ids: ids }
+      prepareGhost(ids)
     })
     tile.addEventListener('dragend', () => {
       clearDropHints()
+      hideGhost()
       for (const k in tileNodes) tileNodes[k].classList.remove('dragging')
       dragHint = null
     })
     tile.addEventListener('dragover', e => {
       if (!isInternal(e)) return
       e.preventDefault()
-      e.stopPropagation()
       e.dataTransfer.dropEffect = 'move'
+      // 自由摆放：不显示"前/后"插入位，改用 contentEl 上的落格虚框（所以不 stopPropagation）
+      if (freeMode()) return
+      e.stopPropagation()
       clearDropHints()
       const r = tile.getBoundingClientRect()
       if (e.clientX < r.left + r.width / 2) tile.classList.add('drop-before')
@@ -568,11 +812,31 @@
       tile.classList.remove('drop-before', 'drop-after')
       const ids = parseDrag(e)
       if (!ids.length || ids.indexOf(sc.id) >= 0) return
+      if (freeMode()) return dropFree(ids, e.clientX, e.clientY)
       dropOn(ids, sc.id, before)
     })
 
     attachResize(tile, sc)
     return tile
+  }
+
+  /* 自由摆放下拖大小要用到的两个信息：
+     · 起始格号 —— 从内联样式里取出来保留，否则拖动过程中图标会跳回自动流位置
+     · 最大跨度 —— 别超过当前列数，否则会撑出隐式列导致横向溢出
+     必须在 applyVisual 改样式之前取。 */
+  function freeResizeInfo (tile) {
+    if (!freeMode()) return { startCol: '', startRow: '', maxCol: 4 }
+    const gc = String(tile.style.gridColumn || '')
+    const gr = String(tile.style.gridRow || '')
+    const startCol = gc.indexOf('/') >= 0 ? gc.split('/')[0].trim() : ''
+    const startRow = gr.indexOf('/') >= 0 ? gr.split('/')[0].trim() : ''
+    const n = parseInt(startCol, 10)
+    const cols = gridMetrics().cols
+    return {
+      startCol: startCol,
+      startRow: startRow,
+      maxCol: Number.isFinite(n) ? Math.max(1, cols - n + 1) : 4
+    }
   }
 
   function attachResize (tile, sc) {
@@ -587,15 +851,17 @@
       const baseRow = sc.row
       let col = baseCol
       let row = baseRow
+      const info = freeResizeInfo(tile)
       const applyVisual = () => {
-        tile.style.gridColumn = 'span ' + col
-        tile.style.gridRow = 'span ' + row
+        tile.style.gridColumn = info.startCol ? info.startCol + ' / span ' + col : 'span ' + col
+        tile.style.gridRow = info.startRow ? info.startRow + ' / span ' + row : 'span ' + row
         const ghost = Object.assign({}, sc, { col: col, row: row })
         tile.style.setProperty('--icon-size', iconSizeFor(ghost, store.settings.showLabels) + 'px')
       }
       const maxCol = Math.max(1, Math.floor((contentEl.clientWidth - 4) / step))
+      const capCol = Math.min(4, Math.max(1, maxCol), info.maxCol)
       const onMove = ev => {
-        col = clamp(baseCol + Math.round((ev.clientX - startX) / step), 1, Math.min(4, Math.max(1, maxCol)))
+        col = clamp(baseCol + Math.round((ev.clientX - startX) / step), 1, capCol)
         row = clamp(baseRow + Math.round((ev.clientY - startY) / step), 1, 4)
         applyVisual()
       }
@@ -603,8 +869,14 @@
         document.removeEventListener('mousemove', onMove)
         document.removeEventListener('mouseup', onUp)
         document.body.style.cursor = ''
-        if (col !== sc.col || row !== sc.row) store.updateShortcut(sc.id, { col: col, row: row })
-        else render()
+        if (col !== sc.col || row !== sc.row) {
+          store.batch(() => {
+            store.updateShortcut(sc.id, { col: col, row: row })
+            if (freeMode()) settleFree(sc.id)   // 放大后原位放不下就挪到最近的空位
+          })
+        } else {
+          render()
+        }
       }
       document.body.style.cursor = 'nwse-resize'
       document.addEventListener('mousemove', onMove)
@@ -991,17 +1263,23 @@
       e.preventDefault()
       e.dataTransfer.dropEffect = 'move'
       if (e.target === gridEl) clearDropHints()
+      if (freeMode()) ghostAt(e)
     })
     // 拖到网格/空白处 → 放到末尾（若是文件夹内的图标，则移出文件夹）
+    // 自由摆放下改成"放到鼠标所在的格子"
     contentEl.addEventListener('dragover', e => {
       if (!isInternal(e)) return
       e.preventDefault()
       e.dataTransfer.dropEffect = 'move'
+      if (freeMode()) ghostAt(e)
     })
     contentEl.addEventListener('drop', e => {
       if (!isInternal(e)) return
       e.preventDefault()
-      dropAtEnd(parseDrag(e))
+      const ids = parseDrag(e)
+      hideGhost()
+      if (freeMode()) return dropFree(ids, e.clientX, e.clientY)
+      dropAtEnd(ids)
     })
     contentEl.addEventListener('contextmenu', e => {
       if (e.target.closest('.tile') || e.target.closest('.inner-tile')) return
@@ -1025,6 +1303,11 @@
     document.addEventListener('mouseleave', () => KL.ui.tip.hide())
 
     store.on((type, payload) => {
+      // 自由摆放下位置是写死的，换「排列顺序」必须重新密排一次，否则看不出任何变化
+      if (type === 'settings' && payload && payload.key === 'sortBy' && freeMode()) {
+        repack()
+        return
+      }
       if (type === 'shortcuts' || type === 'settings') render()
     })
 
@@ -1037,6 +1320,12 @@
     refreshTile: refreshTile,
     setBusy: setBusy,
     launch: launch,
+    // —— 自由摆放（关闭自动对齐）——
+    freeMode: freeMode,
+    repack: repack,
+    layoutFree: layoutFree,
+    gridMetrics: gridMetrics,
+    dropFree: dropFree,
     setCategory: function (id) {
       currentCategory = id || 'all'
       if (currentCategory !== 'all') selected.clear()

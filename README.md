@@ -13,6 +13,7 @@
   - 手动：文字图标（字符 + 底色 + 字色）、内置字形图标（12 种 + 18 色）、任意图片。
 - **侧边栏分类**：新建 / 重命名 / 换色 / 删除；把图标拖到分类上即完成归类，侧边栏显示每个分类的数量。
 - **宫格自由布局**：每个图标可占 1×1 ～ 4×4 任意格，右下角拖拽实时缩放；排列顺序支持手动、名称、创建时间、最近使用；显示/隐藏图标文字。
+- **自动对齐 / 自由摆放**：默认「自动对齐」—— 图标总是往上补齐空位，拖动后自动挤紧。关掉后进入**自由摆放**，可以把图标放到任意空格、拖动后原地留空（拖拽时会有虚线格子提示落点；落点被占会自动挪到最近的空位）。两种模式随时切换，来回切不会丢掉已经摆好的位置。
 - **一键扫描本机应用**：四个来源勾选扫描 —— 开始菜单快捷方式、系统应用列表（含 UWP，从 AppxManifest 取真实 logo）、桌面快捷方式、已安装程序注册表（App Paths 与 Uninstall 键），带搜索、图标预览、多选批量导入。
 - **导入浏览器收藏夹**：支持 Chrome / Edge / Brave / Vivaldi / Chromium / 360 极速 / QQ 浏览器，自动探测多 Profile，文件夹树形三态勾选，导入后后台并发拉取图标。
 - **批量操作**：橡皮筋框选（`Ctrl` 追加）/ `Ctrl+A` 多选后统一移动分类、装进文件夹、改尺寸、刷新图标、删除。
@@ -36,7 +37,7 @@
 > 预览调试钩子（URL 参数）：`?dlg=scan|bookmarks|settings|add|edit|icon|folder|confirm` 直接打开对应弹窗；
 > `?dlg=menu&x=660&y=120&expand=图标尺寸` 在指定位置打开图标右键菜单并强制展开某个二级菜单
 > （无头截图里没法触发 `:hover`，所以用它来验证/出图菜单边界效果）；`?labels=0` 直接进无字模式（验证名称气泡）；
-> `?debug` 把主题与计算色写进 `document.title`；`?empty` 渲染空状态。
+> `?align=0` 直接关闭自动对齐（验证自由摆放）；`?debug` 把主题与计算色写进 `document.title`；`?empty` 渲染空状态。
 
 ## 使用说明
 
@@ -73,6 +74,7 @@ utools-shortcut-launcher/
 │   ├── uitest.html        # UI 回归测试（iframe 加载真实页面，校验菜单边界）
 │   ├── dedup-test.html    # 去重回归测试（同一 exe 不同参数不能互相判重）
 │   ├── tip-test.html      # 名称气泡回归测试（无字模式下的悬浮提示）
+│   ├── layout-test.html   # 布局回归测试（自动对齐 / 自由摆放）
 │   ├── selftest.js        # 桥接层自测（图标/lnk/应用扫描）
 │   ├── smoke.js           # 渲染冒烟校验
 │   └── make-logo.py       # logo 生成脚本
@@ -122,6 +124,9 @@ node tools/release.js      # 生成 dist/ 并逐项做合规检查
 - **Firefox 收藏夹**为 `places.sqlite`（需解 sqlite），暂未支持；Chromium 系全支持。
 - favicon 走直连抓取，被墙或不提供图标的站点会退回字形图标，可在设置里配置第三方图标服务模板。
 - **浏览器 PWA 快捷方式**（Chrome / Edge「将网页安装为应用」生成的，可执行文件是共用的 `chrome_proxy.exe` / `msedge_proxy.exe`）按「程序 + 启动参数」判重，多个 PWA 可以共存。但**应用扫描导入的条目 `target` 存的是 `.lnk` 自身路径**（不是解析后的 exe），所以同一个 PWA 分别用拖拽和扫描各加一次会出现两条 —— 手动删掉一条即可。
+- **自由摆放（关闭自动对齐）只在主网格生效**：大文件夹内部的图标、文件夹弹层仍按各自的网格自动排布。
+- **自由摆放 + 「全部」分类是近似的**：格子坐标跟着每个快捷方式走，而「全部」视图把各分类混在一起显示；不同分类里摆到同一格的图标，在「全部」视图里会被临时挤开（不写回数据，各自分类视图里位置不变）。
+- **自由摆放时窗口窄了会看到"变形"**：列数变少时超出的图标会被临时夹取 / 下移，**这是显示层的临时处理、不改数据**，窗口变宽即复原；也就是说窄窗口下看到的排布未必是真实排布。
 
 ## 自测
 
@@ -144,10 +149,15 @@ chrome --headless=new --allow-file-access-from-files --virtual-time-budget=8000 
 # 名称气泡回归测试：无字模式下悬浮弹名称、跟光标、边缘夹取、拖拽时不弹
 chrome --headless=new --allow-file-access-from-files --virtual-time-budget=12000 \
   --dump-dom "file:///<repo>/tools/tip-test.html"
+
+# 布局回归测试：切到自由摆放不跳、落格精确、留空不补、来回切位置不丢
+chrome --headless=new --allow-file-access-from-files --virtual-time-budget=9000 \
+  --dump-dom "file:///<repo>/tools/layout-test.html"
 ```
 
-`tools/uitest.html`、`tools/dedup-test.html`、`tools/tip-test.html` 都直接 iframe 引入 `../index.html`，
-断言结果写在 `document.title` 里，用 `--dump-dom` 回读即可；不复制页面结构，所以页面改了测试不会悄悄失效。
+`tools/uitest.html`、`tools/dedup-test.html`、`tools/tip-test.html`、`tools/layout-test.html`
+都直接 iframe 引入 `../index.html`，断言结果写在 `document.title` 里，用 `--dump-dom` 回读即可；
+不复制页面结构，所以页面改了测试不会悄悄失效。
 `dedup-test.html` 会临时替换 iframe 里的 `window.services.resolvePaths` 喂假数据，跑完在
 in-memory 的 mock 数据里留下几条测试条目 —— 用单独的 `--user-data-dir` 跑即可，别拿它去动真实数据。
 
