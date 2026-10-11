@@ -288,18 +288,113 @@
                     })(), 'overlaps=0')
                     KL.store.setSetting('sortBy', 'manual')
 
-                    // ⑨ 拖进文件夹 → 位置清掉
+                    // ⑨ 批量摆放：多选整组平移，保留彼此的相对位置。
+                    //    这一节用真实 DragEvent 走完 dragstart → dragover → drop 全链路，
+                    //    顺带验证拖拽落点虚框的数量。
                     return sleep(80).then(function () {
-                      var folderEl = gridEl.querySelector('.tile.folder')
-                      var fid = folderEl.dataset.id
-                      var victim = gridEl.querySelector('.tile[data-id]:not(.folder)').dataset.id
-                      KL.grid.dropFree([victim], 0, 0)     // 先给它一个位置
-                      ok('victim-has-position', KL.store.getShortcut(victim).x !== null)
-                      KL.store.setParent([victim], fid)
-                      ok('position-cleared-when-into-folder',
-                        KL.store.getShortcut(victim).x === null && KL.store.getShortcut(victim).y === null,
-                        KL.store.getShortcut(victim).x + ',' + KL.store.getShortcut(victim).y)
-                      finish(out)
+                      var grp = tiles().slice(0, 3).map(function (t) { return t.dataset.id })
+                      var m9 = KL.grid.gridMetrics()
+                      // 用 ctrl+click 造出多选（这样 dragstart 里拿到的就是整组）
+                      grp.forEach(function (id) {
+                        byId(id).dispatchEvent(new W.MouseEvent('click', { ctrlKey: true, bubbles: true }))
+                      })
+                      ok('multi-select-built', KL.grid.selectedIds().length === grp.length,
+                        KL.grid.selectedIds().length + '/' + grp.length)
+
+                      var gb = snapshot()
+                      var origin = grp[0]
+                      function offsets (snap) {
+                        return grp.map(function (id) {
+                          return (snap[id].colStart - snap[origin].colStart) + ',' +
+                                 (snap[id].rowStart - snap[origin].rowStart)
+                        })
+                      }
+                      function maxRowOf (snap) {
+                        var mx = 0
+                        for (var k in snap) {
+                          var e2 = snap[k]
+                          if (e2.rowStart + e2.spanRow - 1 > mx) mx = e2.rowStart + e2.spanRow - 1
+                        }
+                        return mx
+                      }
+                      var offBefore = offsets(gb)
+                      // 落点挑一个"整组一定放得下"的列，才能断言"落哪就是哪"
+                      // （贴右缘时会被夹回来，那是下一节单独测的）
+                      var maxRight = 0
+                      grp.forEach(function (id) {
+                        maxRight = Math.max(maxRight,
+                          (gb[id].colStart - gb[origin].colStart) + gb[id].spanCol)
+                      })
+                      var tx = Math.max(0, Math.min(1, m9.cols - maxRight))
+
+                      var dt = new W.DataTransfer()
+                      var dragEv = new W.DragEvent('dragstart', { dataTransfer: dt, bubbles: true })
+                      byId(origin).dispatchEvent(dragEv)
+                      ok('synthetic-drag-accepted', !!dragEv.dataTransfer,
+                        dragEv.dataTransfer ? 'ok' : 'DataTransfer 没挂上')
+
+                      var target = { x: tx, y: maxRowOf(gb) + 1 }
+                      var tp = clientOf(target.x, target.y)
+                      gridEl.dispatchEvent(new W.DragEvent('dragover',
+                        { dataTransfer: dt, clientX: tp.x, clientY: tp.y, bubbles: true }))
+                      var ghostN = gridEl.querySelectorAll('.drop-cell').length
+                      ok('ghost-one-cell-per-item', ghostN === grp.length, ghostN + '/' + grp.length)
+
+                      gridEl.dispatchEvent(new W.DragEvent('drop',
+                        { dataTransfer: dt, clientX: tp.x, clientY: tp.y, bubbles: true }))
+                      return sleep(100).then(function () {
+                        var ga = snapshot()
+                        var offAfter = offsets(ga)
+                        ok('group-keeps-relative-offsets',
+                          offBefore.join('|') === offAfter.join('|'),
+                          offBefore.join(' ') + ' → ' + offAfter.join(' '))
+                        var landed = cellStarts(ga, origin)
+                        ok('group-lands-where-dropped',
+                          landed.x === target.x && landed.y === target.y,
+                          'want=' + target.x + ',' + target.y + ' got=' + landed.x + ',' + landed.y)
+                        var moved9 = sameRects(gb, ga, grp)
+                        ok('group-drop-does-not-move-others', moved9.length === 0,
+                          moved9.slice(0, 3).join(' / '))
+                        ok('ghost-cleared-after-drop',
+                          gridEl.querySelectorAll('.drop-cell').length === 0)
+
+                        // 贴右缘落点 → 整组被夹回来，形状仍不变
+                        var gb2 = snapshot()
+                        var offBefore2 = offsets(gb2)
+                        var dt2 = new W.DataTransfer()
+                        byId(origin).dispatchEvent(new W.DragEvent('dragstart', { dataTable: dt2, dataTransfer: dt2, bubbles: true }))
+                        var tp2 = clientOf(m9.cols - 1, maxRowOf(gb2) + 1)
+                        gridEl.dispatchEvent(new W.DragEvent('dragover',
+                          { dataTransfer: dt2, clientX: tp2.x, clientY: tp2.y, bubbles: true }))
+                        var ghostN2 = gridEl.querySelectorAll('.drop-cell').length
+                        gridEl.dispatchEvent(new W.DragEvent('drop',
+                          { dataTransfer: dt2, clientX: tp2.x, clientY: tp2.y, bubbles: true }))
+                        return sleep(100).then(function () {
+                          var ga2 = snapshot()
+                          ok('clamped-group-keeps-shape', offsets(ga2).join('|') === offBefore2.join('|'),
+                            offBefore2.join(' ') + ' → ' + offsets(ga2).join(' '))
+                          var allInside = true
+                          grp.forEach(function (id) {
+                            var s2 = ga2[id]
+                            if (s2.colStart < 1 || s2.colStart + s2.spanCol - 1 > m9.cols) allInside = false
+                          })
+                          ok('clamped-group-stays-in-columns', allInside,
+                            'cols=' + m9.cols + ' ghost=' + ghostN2)
+                          KL.grid.clearSelection()
+
+                          // ⑩ 拖进文件夹 → 位置清掉
+                          var folderEl = gridEl.querySelector('.tile.folder')
+                          var fid = folderEl.dataset.id
+                          var victim = gridEl.querySelector('.tile[data-id]:not(.folder)').dataset.id
+                          KL.grid.dropFree([victim], 0, 0)     // 先给它一个位置
+                          ok('victim-has-position', KL.store.getShortcut(victim).x !== null)
+                          KL.store.setParent([victim], fid)
+                          ok('position-cleared-when-into-folder',
+                            KL.store.getShortcut(victim).x === null && KL.store.getShortcut(victim).y === null,
+                            KL.store.getShortcut(victim).x + ',' + KL.store.getShortcut(victim).y)
+                          finish(out)
+                        })
+                      })
                     })
                   })
                 })

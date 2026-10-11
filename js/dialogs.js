@@ -8,9 +8,20 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.6.0'
+  const VERSION = '1.7.0'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.7.0',
+      date: '2026-10-12',
+      items: [
+        '新增：自由摆放模式下支持「批量摆放」—— 多选图标一起拖到别处时，整组按原来的相对位置平移过去（谁在谁旁边、中间隔几格都原样保留），原位置留空',
+        '拖动时会按选区形状铺出一组虚线落点，能提前看到整组会落在哪；整组放不下时会自动挪到最近的合适位置，形状依然不变',
+        '多选工具条上会提示「拖动可整体摆放」',
+        '新增设置项「浏览器图标」：可选「联网获取」或「仅本地」。选「仅本地」后插件完全离线（抓网站图标是它唯一会联网的功能），网址图标退回快捷方式自带的图标文件，没有就用字形图标',
+        '修复：不再往日志里重复记录「contextBridge expose skipped」—— 那是 uTools 关闭 contextIsolation 时的正常现象，不是错误'
+      ]
+    },
     {
       v: '1.6.0',
       date: '2026-10-12',
@@ -340,10 +351,17 @@
     const urlBtn = el('button', 'btn', '从图标地址拉取…')
     urlBtn.type = 'button'
     urlBtn.addEventListener('click', async () => {
+      if (store.settings.faviconOnline === false) {
+        toast('当前是「仅本地」模式，不会联网。可在设置里把「浏览器图标」改回「联网获取」', 'error')
+        return
+      }
       const u = await KL.ui.prompt({ title: '图标图片地址', placeholder: 'https://example.com/icon.png', value: 'https://' })
       if (!u) return
       toast('正在拉取…')
-      const r = await S.fetchFavicon(u, { service: store.settings.faviconService })
+      const r = await S.fetchFavicon(u, {
+        service: store.settings.faviconService,
+        online: store.settings.faviconOnline !== false
+      })
       const src = (r && r.ok) ? r.dataUrl : null
       if (!src) {
         const rr = await S.fetchFavicon(u, {})
@@ -1766,8 +1784,20 @@
     ], s.confirmDelete !== false, v => store.setSetting('confirmDelete', v))
     body.appendChild(field('删除快捷方式', confirmSeg))
 
+    const onlineSeg = segmented([
+      { value: true, label: '联网获取' },
+      { value: false, label: '仅本地' }
+    ], s.faviconOnline !== false, v => {
+      store.setSetting('faviconOnline', v)
+      svcInput.disabled = !v
+    })
+    body.appendChild(field('浏览器图标', onlineSeg,
+      '「联网获取」＝抓取网站图标，这是本插件唯一会联网的功能。' +
+      '「仅本地」＝一个请求都不发（审核/隐私场景可用），网址图标改用快捷方式自带的图标文件，没有就退回字形图标。'))
+
     const svcInput = input(s.faviconService || '', 'https://favicon.im/{domain}')
     svcInput.addEventListener('change', () => store.setSetting('faviconService', svcInput.value.trim()))
+    svcInput.disabled = s.faviconOnline === false
     body.appendChild(field('第三方图标服务（可选）', svcInput, '当网站自身图标抓不到时的兜底。可用变量：{domain} 域名、{origin} 源、{url} 完整网址。留空则只用网站自身的图标'))
 
     body.appendChild(el('div', '', '<div style="height:6px"></div>'))

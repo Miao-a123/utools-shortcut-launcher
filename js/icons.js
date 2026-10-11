@@ -303,7 +303,10 @@
     }
 
     if (src.kind === 'url') {
-      const r = await S.fetchFavicon(src.url, { service: KL.store.settings.faviconService })
+      const r = await S.fetchFavicon(src.url, {
+        service: KL.store.settings.faviconService,
+        online: KL.store.settings.faviconOnline !== false
+      })
       if (r && r.ok) {
         const d = await normalize(r.dataUrl, 128)
         if (d) return d

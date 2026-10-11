@@ -8,6 +8,60 @@
 
 ---
 
+## v1.7.0 — 批量摆放 + 联网开关 + 日志噪音（2026-10-12）
+
+### 1. 新增：批量摆放（多选整组平移）
+
+**需求**：多选图标原来只能批量改分类，不能批量挪位置。希望多选后能整体拖到别处，并且**保留各图标之间的相对位置**（自由摆放模式）；自动对齐时则维持原来的"往上挤紧"。
+
+**问题**：`dropFree()` 是逐个 `nearestFree()` 找空位的 —— 一组图标被丢到落点附近时会被打散成一堆，谁在谁旁边、中间隔几格全丢了。
+
+**修复**（`js/grid.js`）：
+- `dragHint` 增加 `grabbed`：记下**被抓住的那个图标**（多选时 `ids` 是整个选区，顺序是 Set 的插入序，不一定是被抓的那个）。
+- `groupItems(ids, grabbed)`：以 grabbed 为原点，算出组内每个图标的相对偏移 `(dx, dy)` 与跨度。**只要有成员没有格子坐标就返回 null**（例如刚从大文件夹里拖出来的内部图标，进文件夹时坐标已被清空）。
+- `groupFits(p, items, ox, oy, cols)`：整组能否落在该原点 —— 不越界、不压别的图标、**组内也不自压**（用 `seen` 集合，防止组内成员本来就重叠的情况）。
+- `groupOrigin(p, items, cx, cy, cols)`：先把整组左上角夹回 `[-minDx, cols - maxRight]`（保证不横着跑出列数），再从落点按曼哈顿距离找最近一个"整组放得下"的位置；**找不到就返回 null**（组比窗口还宽），调用方退化成逐个找空位并提示一句。
+- 落点虚框改成**一组**：`ghostEls` 数组，每个成员一个 `.drop-cell`，按选区形状铺开 —— 用户能提前看到整组会落在哪，而不是只有一个方块。
+- 多选工具条加提示「拖动可整体摆放」（自由摆放 + 选中 >1 项时才出现），否则没人知道有这个能力。
+
+### 2. 新增设置项「浏览器图标」：联网获取 / 仅本地
+
+`fetchFavicon()` 开头加一道闸门：`online === false` 时**一个请求都不发**，直接返回 `{ ok: false, offline: true }`。抓网站图标是这个插件里唯一会联网的功能，关掉之后完全离线；网址图标退回快捷方式自带的 `.ico`（`iconLocation`），再不行就是字形图标。
+
+- `js/store.js` 新增 `faviconOnline`（默认 `true`）。
+- `js/icons.js` 与图标选择器里的「从图标地址拉取」都把设置传进去。
+- 图标选择器那个手动拉取按钮在「仅本地」下会给出明确提示而不是静默失败。
+- 设置项放在「第三方图标服务」上面（先决定要不要联网，再决定用哪家服务），并在离线时把服务输入框置灰。
+
+### 3. 修复：`plugin.log` 里的重复噪音
+
+`preload.js` 末尾无条件 `log('contextBridge expose skipped', e.message)` —— 但 uTools 默认关闭 `contextIsolation`，这时 `contextBridge` 本来就不可用，`window.services` 已经挂好了，功能完全正常。结果是**每次进入插件都往 `plugin.log` 写一行看起来像报错的记录**（用户机器上累积了 60 多条）。现在只在"`contextIsolation` 开着却依然失败"时才记录 —— 那才是真问题。
+
+### 验证
+
+- `tools/layout-test.html` 扩到 **35 条断言全 PASS**，其中新增的批量摆放部分是**真实 DragEvent 全链路**（`dragstart → dragover → drop`，用 `new DataTransfer()` 构造）：
+  - `multi-select-built`：ctrl+click 造出的多选是 3/3
+  - `synthetic-drag-accepted`：`DataTransfer` 确实挂上了事件（不是靠直接调内部函数绕过去）
+  - `ghost-one-cell-per-item`：落点虚框数量 == 组内图标数（3/3）
+  - `group-keeps-relative-offsets`：`0,0 3,0 3,1 → 0,0 3,0 3,1`（含中间空列也原样保留）
+  - `group-lands-where-dropped`、`group-drop-does-not-move-others`、`ghost-cleared-after-drop`
+  - `clamped-group-keeps-shape` + `clamped-group-stays-in-columns`：贴右缘落点被夹回来后形状不变、不越界
+- 新增 `tools/offline-test.js`：**12 项全 PASS**。把 `fetchFavicon` 的**真实源码**从 `preload.js` 里抽出来，用桩 `request` 注入后跑：
+  - `offline-blocks-all-requests`（连第三方图标服务模板也一个请求都不发）
+  - `online-does-request` / `default-is-online` / `missing-options-is-online`（老数据没有这个设置项时不能突然变哑巴）
+  - 静态守卫：catch 块里有 `contextIsolation` 判断且不是无条件 `log(`
+  
+  为什么不直接 `require('../preload.js')`：它顶层会碰 `window`/`electron`/`utools`，而且失败分支会往用户真实数据目录写日志 —— 抽源码跑更干净。
+- 像素复核截图：`#`/`.` 占用图显示批量拖拽后第 3 行出现 `# # # #`（GitHub 1 格 + ESP-IDF 文档 2 格 + 哔哩哔哩 1 格，中间空列也被正确保留），未参与拖拽的「知乎」留在原处第 1 行第 5 列；`ghosts=0` 说明落点虚框已清理。
+- `uitest`（16）、`dedup-test`（16）、`tip-test`（20）全 PASS；`release.js`（12 文件 / 260 KB）与 `smoke.js` 通过。
+
+### 已知边界
+
+- 组内**有成员没有格子坐标**时（例如刚从大文件夹里拖出来的内部图标），退化成逐个找空位并提示一句 —— 这种组没有相对位置可言。
+- 组比窗口还宽时（列数不够）同样退化，形状无法保留。
+
+---
+
 ## v1.6.0 — 新增「自动对齐 / 自由摆放」开关（2026-10-12）
 
 ### 需求

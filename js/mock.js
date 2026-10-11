@@ -126,7 +126,8 @@
     return {
       version: 1,
       settings: {
-        showLabels: true, autoAlign: true, sortBy: 'manual', cell: 92, theme: 'auto', faviconService: '',
+        showLabels: true, autoAlign: true, sortBy: 'manual', cell: 92, theme: 'auto',
+        faviconService: '', faviconOnline: true,
         launchOnDoubleClick: false, confirmDelete: true, hideOnLaunch: true, tileRadius: 16
       },
       categories: cats,

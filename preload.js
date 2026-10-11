@@ -324,6 +324,9 @@ function parseIconLinks (html, base) {
 
 async function fetchFavicon (rawUrl, options) {
   const o = options || {}
+  // 「仅本地」模式：一个请求都不发。抓网站图标是整个插件里唯一会联网的地方，
+  // 关掉之后完全离线 —— 网址图标会退回快捷方式自带的 .ico，再不行就是字形图标。
+  if (o.online === false) return { ok: false, offline: true, error: '已关闭联网获取图标' }
   let base
   try {
     base = new URL(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawUrl) ? rawUrl : 'https://' + rawUrl)
@@ -864,11 +867,16 @@ const services = {
 }
 
 window.services = services
+// uTools 默认关掉 contextIsolation，这时 contextBridge 本身就不可用 —— 属于预期情况：
+// window.services 上面已经挂好了，功能不受影响。以前这里无条件 log 一条，结果每次
+// 进入插件都往 plugin.log 里写一行，看起来像出了错（排查时白白多一条噪音）。
+// 现在只在"contextIsolation 开着、但 expose 依然失败"时才记录 —— 那才是真问题。
 try {
   const electron = require('electron')
   if (electron && electron.contextBridge && electron.contextBridge.exposeInMainWorld) {
     electron.contextBridge.exposeInMainWorld('services', services)
   }
 } catch (e) {
-  log('contextBridge expose skipped', e.message)
+  const msg = String((e && e.message) || e)
+  if (!/contextIsolation/i.test(msg)) log('contextBridge expose skipped', msg)
 }

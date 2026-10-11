@@ -17,6 +17,7 @@
     tileBorderWidth: 1,
     theme: 'auto',
     faviconService: '',
+    faviconOnline: true,
     launchOnDoubleClick: false,
     confirmDelete: true,
     hideOnLaunch: true,

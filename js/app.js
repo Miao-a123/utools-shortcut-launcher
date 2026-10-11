@@ -283,7 +283,10 @@
       bar.classList.remove('show')
       return
     }
-    document.getElementById('selCount').textContent = '已选 ' + ids.length + ' 项'
+    document.getElementById('selCount').textContent =
+      '已选 ' + ids.length + ' 项' +
+      // 自由摆放下多选拖动是整组平移（保留彼此的相对位置），提一句否则没人会知道
+      (store.settings.autoAlign === false && ids.length > 1 ? ' · 拖动可整体摆放' : '')
     bar.classList.add('show')
   }
 

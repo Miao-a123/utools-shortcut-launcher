@@ -107,7 +107,11 @@
       }
       return best || firstFree(col, row)
     }
-    return { cols: cols, fits: fits, mark: mark, firstFree: firstFree, nearestFree: nearestFree }
+    function isFree (x, y) { return !occupied.has(K(x, y)) }
+    return {
+      cols: cols, fits: fits, mark: mark, isFree: isFree,
+      firstFree: firstFree, nearestFree: nearestFree
+    }
   }
 
   /* 算出这一屏每个顶层图标的实际落格。existing 传进来时会在它的占位上继续排
@@ -152,17 +156,160 @@
     }
   }
 
+  /* ---------------- 成组摆放（批量拖动） ----------------
+     多选拖动时，如果逐个找空位，一组图标的相对排布会被打散。
+     这里改成"整组一起落"：以被抓住的那个图标为原点，记下组内每个图标的相对偏移，
+     落格时整体平移，形状原样保留。 */
+
+  function groupItems (ids, grabbed) {
+    const originId = (grabbed && ids.indexOf(grabbed) >= 0) ? grabbed : ids[0]
+    const origin = store.getShortcut(originId)
+    if (!origin || origin.x == null || origin.y == null) return null
+    const items = []
+    for (const id of ids) {
+      const s = store.getShortcut(id)
+      // 有成员还没有格子坐标（比如刚从文件夹里拖出来）→ 组信息不完整，
+      // 交给调用方退化成逐个找空位
+      if (!s || s.x == null || s.y == null) return null
+      items.push({
+        id: id,
+        dx: s.x - origin.x,
+        dy: s.y - origin.y,
+        col: Math.max(1, s.col || 1),
+        row: Math.max(1, s.row || 1)
+      })
+    }
+    return items
+  }
+
+  // 整组能不能落在以 (ox, oy) 为原点的位置：不越界、不压别的图标、组内也不自压
+  function groupFits (p, items, ox, oy, cols) {
+    const seen = new Set()
+    for (const it of items) {
+      const x = ox + it.dx
+      const y = oy + it.dy
+      if (x < 0 || y < 0 || x + it.col > cols) return false
+      for (let dy = 0; dy < it.row; dy++) {
+        for (let dx = 0; dx < it.col; dx++) {
+          const k = (x + dx) + ',' + (y + dy)
+          if (!p.isFree(x + dx, y + dy)) return false
+          if (seen.has(k)) return false
+          seen.add(k)
+        }
+      }
+    }
+    return true
+  }
+
+  /* 先把整组的左上角夹回可视列范围，再从落点按曼哈顿距离找最近一个"整组放得下"的位置。
+     找不到（组比窗口还宽）返回 null，由调用方退化成逐个找空位。 */
+  function groupOrigin (p, items, cx, cy, cols) {
+    let minDx = 0
+    let maxRight = 0
+    for (const it of items) {
+      if (it.dx < minDx) minDx = it.dx
+      if (it.dx + it.col > maxRight) maxRight = it.dx + it.col
+    }
+    const lo = -minDx
+    const hi = Math.max(lo, cols - maxRight)
+    const tx = clamp(cx, lo, hi)
+    const ty = Math.max(0, cy)
+    if (groupFits(p, items, tx, ty, cols)) return { x: tx, y: ty }
+    let best = null
+    let bestD = Infinity
+    for (let y = 0; y <= ty + 40; y++) {
+      for (let x = lo; x <= hi; x++) {
+        if (!groupFits(p, items, x, y, cols)) continue
+        const d = Math.abs(x - tx) + Math.abs(y - ty)
+        if (d < bestD) { bestD = d; best = { x: x, y: y } }
+      }
+    }
+    return best
+  }
+
+  function eachNearestFree (p, m, list, cx, cy, map) {
+    list.forEach(id => {
+      const sc = store.getShortcut(id)
+      if (!sc) return
+      const col = clamp(sc.col || 1, 1, m.cols)
+      const row = Math.max(1, sc.row || 1)
+      const free = p.nearestFree(cx, cy, col, row)
+      p.mark(free.x, free.y, col, row)
+      map[id] = free
+    })
+  }
+
+  // 返回 true 表示整组一起落的；false 表示退化成逐个放
+  function placeGroup (p, m, list, cx, cy, map) {
+    const items = groupItems(list, dragHint && dragHint.grabbed)
+    if (items) {
+      const o = groupOrigin(p, items, cx, cy, m.cols)
+      if (o) {
+        for (const it of items) map[it.id] = { x: o.x + it.dx, y: o.y + it.dy }
+        return true
+      }
+    }
+    eachNearestFree(p, m, list, cx, cy, map)
+    return false
+  }
+
   /* ---------------- 拖拽落点虚框（自由摆放） ---------------- */
 
-  let ghostEl = null
+  let ghostEls = []
   let ghostPacker = null
   let ghostMetrics = null
+  let ghostGroup = null
+  let ghostOthers = null
 
   function hideGhost () {
-    if (ghostEl && ghostEl.parentNode) ghostEl.parentNode.removeChild(ghostEl)
-    ghostEl = null
+    for (const g of ghostEls) if (g.parentNode) g.parentNode.removeChild(g)
+    ghostEls = []
     ghostPacker = null
     ghostMetrics = null
+    ghostGroup = null
+    ghostOthers = null
+  }
+
+  function showGhosts (cells) {
+    while (ghostEls.length < cells.length) {
+      const g = el('div', 'drop-cell')
+      gridEl.appendChild(g)
+      ghostEls.push(g)
+    }
+    for (let i = 0; i < ghostEls.length; i++) {
+      const g = ghostEls[i]
+      const c = cells[i]
+      if (!c) { g.style.display = 'none'; continue }
+      g.style.display = ''
+      g.style.gridColumn = (c.x + 1) + ' / span ' + c.col
+      g.style.gridRow = (c.y + 1) + ' / span ' + c.row
+    }
+  }
+
+  // 算出落点虚框该出现在哪几格。返回 null 表示这次拖拽不需要虚框。
+  function ghostCells (c) {
+    const m = ghostMetrics
+    if (ghostGroup) {
+      const o = groupOrigin(ghostPacker, ghostGroup, c.x, c.y, m.cols)
+      if (o) {
+        return ghostGroup.map(it => ({ x: o.x + it.dx, y: o.y + it.dy, col: it.col, row: it.row }))
+      }
+    }
+    // 组信息不完整 / 组太宽放不下 → 按"逐个找最近空位"预览（用一份临时占位表，别污染拖拽用的）
+    const list = dragHint.ids.filter(id => store.getShortcut(id))
+    const p2 = makePacker(m.cols)
+    layoutFree(ghostOthers || [], m, p2)
+    const out = []
+    list.forEach(id => {
+      const sc = store.getShortcut(id)
+      if (!sc) return
+      const col = clamp(sc.col || 1, 1, m.cols)
+      const row = Math.max(1, sc.row || 1)
+      const free = p2.nearestFree(c.x, c.y, col, row)
+      p2.mark(free.x, free.y, col, row)
+      out.push({ x: free.x, y: free.y, col: col, row: row })
+    })
+    return out
   }
 
   // 拖拽开始时先把"其他图标的占位"打包好，dragover 时只需要算光标落在哪一格
@@ -174,28 +321,22 @@
     layoutFree(others, m, p)
     ghostPacker = p
     ghostMetrics = m
+    ghostOthers = others
+    ghostGroup = groupItems(ids, dragHint && dragHint.grabbed)
   }
 
   function ghostAt (e) {
     if (!freeMode() || !ghostPacker || !dragHint) return
     // 拖到大文件夹上 = 移入文件夹（既有行为），这时不显示落格虚框
     if (e.target && e.target.closest && e.target.closest('.tile.folder')) return hideGhost()
-    const sc = store.getShortcut(dragHint.ids[0])
-    if (!sc) return
-    const m = ghostMetrics
-    const col = clamp(sc.col || 1, 1, m.cols)
-    const row = Math.max(1, sc.row || 1)
-    const c = cellFromPoint(e.clientX, e.clientY, m)
-    const free = ghostPacker.nearestFree(c.x, c.y, col, row)
-    if (!ghostEl) {
-      ghostEl = el('div', 'drop-cell')
-      gridEl.appendChild(ghostEl)
-    }
-    ghostEl.style.gridColumn = (free.x + 1) + ' / span ' + col
-    ghostEl.style.gridRow = (free.y + 1) + ' / span ' + row
+    const c = cellFromPoint(e.clientX, e.clientY, ghostMetrics)
+    const cells = ghostCells(c)
+    if (cells) showGhosts(cells)
   }
 
-  /* 自由摆放下的落子：把拖动的图标放到落点格；该格被占就找最近的空位。 */
+  /* 自由摆放下的落子：
+     多个图标一起拖 → 整组平移，保留彼此的相对位置；
+     单个图标 → 落在落点格；该格被占就找最近的空位。 */
   function dropFree (ids, clientX, clientY) {
     const list = ids.filter(id => store.getShortcut(id))
     if (!list.length) return
@@ -205,21 +346,17 @@
     layoutFree(others, m, p)
     const c = cellFromPoint(clientX, clientY, m)
     const map = {}
+    let grouped = false
     store.batch(() => {
       store.setParent(list, null)          // 落回主网格（从文件夹里拖出来的情况）
-      list.forEach(id => {
-        const sc = store.getShortcut(id)
-        if (!sc) return
-        const col = clamp(sc.col || 1, 1, m.cols)
-        const row = Math.max(1, sc.row || 1)
-        const free = p.nearestFree(c.x, c.y, col, row)
-        p.mark(free.x, free.y, col, row)
-        map[id] = free
-      })
+      grouped = placeGroup(p, m, list, c.x, c.y, map)
       store.setPositions(map)
     })
     hideGhost()
     render()
+    if (!grouped && list.length > 1) {
+      toast('这组里有还没摆过位置的图标，已按顺序挨着放好')
+    }
   }
 
   /* 改尺寸后原位可能放不下（压到别人 / 超出当前列数）→ 挪到最近的空位。
@@ -379,7 +516,7 @@
       e.dataTransfer.setData('text/plain', sc.name)
       e.dataTransfer.effectAllowed = 'move'
       setTimeout(() => { for (const id of ids) if (tileNodes[id]) tileNodes[id].classList.add('dragging') }, 0)
-      dragHint = { ids: ids }
+      dragHint = { ids: ids, grabbed: sc.id }
       prepareGhost(ids)
     })
     tile.addEventListener('dragend', () => {
@@ -464,7 +601,7 @@
       e.dataTransfer.setData('text/plain', sc.name)
       e.dataTransfer.effectAllowed = 'move'
       setTimeout(() => { for (const id of ids) if (tileNodes[id]) tileNodes[id].classList.add('dragging') }, 0)
-      dragHint = { ids: ids }
+      dragHint = { ids: ids, grabbed: sc.id }
       prepareGhost(ids)        // 拖出文件夹时也能看到落格虚框
     })
     tile.addEventListener('dragend', e => {
@@ -780,7 +917,7 @@
       e.dataTransfer.setData('text/plain', sc.name)
       e.dataTransfer.effectAllowed = 'move'
       setTimeout(() => { for (const id of ids) if (tileNodes[id]) tileNodes[id].classList.add('dragging') }, 0)
-      dragHint = { ids: ids }
+      dragHint = { ids: ids, grabbed: sc.id }
       prepareGhost(ids)
     })
     tile.addEventListener('dragend', () => {
