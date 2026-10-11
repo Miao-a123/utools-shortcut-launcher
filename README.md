@@ -69,6 +69,7 @@ utools-shortcut-launcher/
 │   ├── ps-bridge.ps1      # 常驻 PowerShell 桥：图标提取 / lnk 解析 / 应用扫描
 │   ├── release.js         # 生成发布目录 dist/ 并做上架合规检查
 │   ├── uitest.html        # UI 回归测试（iframe 加载真实页面，校验菜单边界）
+│   ├── dedup-test.html    # 去重回归测试（同一 exe 不同参数不能互相判重）
 │   ├── selftest.js        # 桥接层自测（图标/lnk/应用扫描）
 │   ├── smoke.js           # 渲染冒烟校验
 │   └── make-logo.py       # logo 生成脚本
@@ -117,6 +118,7 @@ node tools/release.js      # 生成 dist/ 并逐项做合规检查
 - **拖拽取路径**依赖 Electron 的 `webUtils`/`File.path`。若运行环境拿不到真实路径，兜底方案：把文件拖到 uTools 搜索框（已在 `plugin.json` 注册 `files` 类型唤起），或用「添加」按钮选择。
 - **Firefox 收藏夹**为 `places.sqlite`（需解 sqlite），暂未支持；Chromium 系全支持。
 - favicon 走直连抓取，被墙或不提供图标的站点会退回字形图标，可在设置里配置第三方图标服务模板。
+- **浏览器 PWA 快捷方式**（Chrome / Edge「将网页安装为应用」生成的，可执行文件是共用的 `chrome_proxy.exe` / `msedge_proxy.exe`）按「程序 + 启动参数」判重，多个 PWA 可以共存。但**应用扫描导入的条目 `target` 存的是 `.lnk` 自身路径**（不是解析后的 exe），所以同一个 PWA 分别用拖拽和扫描各加一次会出现两条 —— 手动删掉一条即可。
 
 ## 自测
 
@@ -131,10 +133,16 @@ node tools/smoke.js <dump-dom-输出文件>
 # 校验右键菜单二级菜单的边界处理
 chrome --headless=new --allow-file-access-from-files --virtual-time-budget=7000 \
   --dump-dom "file:///<repo>/tools/uitest.html"
+
+# 去重回归测试：同一 exe 不同启动参数（Chrome「安装为应用」的 PWA）不能互相判重
+chrome --headless=new --allow-file-access-from-files --virtual-time-budget=8000 \
+  --dump-dom "file:///<repo>/tools/dedup-test.html"
 ```
 
-`tools/uitest.html` 直接 iframe 引入 `../index.html`，断言结果写在 `document.title` 里，
-用 `--dump-dom` 回读即可；不复制页面结构，所以页面改了测试不会悄悄失效。
+`tools/uitest.html` 与 `tools/dedup-test.html` 都直接 iframe 引入 `../index.html`，断言结果写在
+`document.title` 里，用 `--dump-dom` 回读即可；不复制页面结构，所以页面改了测试不会悄悄失效。
+`dedup-test.html` 会临时替换 iframe 里的 `window.services.resolvePaths` 喂假数据，跑完在
+in-memory 的 mock 数据里留下几条测试条目 —— 用单独的 `--user-data-dir` 跑即可，别拿它去动真实数据。
 
 > `--allow-file-access-from-files` 不能省：`file://` 下 iframe 与父页属于不同 origin，没有这个参数
 > 会直接报 `Blocked a frame with origin "null" from accessing a cross-origin frame`（测试会把这行原话印出来）。

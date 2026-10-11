@@ -8,6 +8,67 @@
 
 ---
 
+## v1.5.2 — 修复 PWA 快捷方式添加不进去（2026-10-11）
+
+### 问题
+
+浏览器「将网页安装为应用」生成的快捷方式拖进来添加失败。用户报的实例是桌面上的 `D:\WinDesktop\AI\豆包网页.lnk`，提示「没有可添加的项目（1 个重复或无效）」。
+
+用项目自带的 `ps-bridge.ps1` 解析这个快捷方式，拿到的是：
+
+```
+target = C:\Program Files\Google\Chrome\Application\chrome_proxy.exe
+args   =  --profile-directory=Default --app-id=nfjhphkhjelhenadmhihghlkccjdpdkk
+```
+
+`chrome_proxy.exe` 是 Chrome 给**所有** PWA 共用的壳，每个 PWA 之间只靠 `--app-id=` 区分。而 `ingestPaths()` 里的判重只有一句：
+
+```js
+if (r.target && store.findByTarget(r.target)) { skipped++; continue }
+```
+
+`store.findByTarget()` 只比 `launch.target`，不看 `launch.args`。用户面板里已经有 `chrome-元宝`（`chrome_proxy.exe --app-id=bdhfnopb…`），于是：
+
+| | 旧逻辑 `findByTarget` | 新逻辑 `findByLaunch` |
+|---|---|---|
+| 拖入 `豆包网页.lnk`（`chrome_proxy.exe --app-id=nfjhphk…`） | 命中 `chrome-元宝` → 判为重复跳过 | 不命中 → 正常添加 |
+
+也就是说 **Chrome 的所有 PWA 里，只有第一个能加进来，之后每一个都会被判成重复**。Edge 的 `msedge_proxy.exe` 同理。
+
+### 修复
+
+- `js/store.js` 新增 `normArgs(a)` 与 `findByLaunch(launch)`：
+  - `normArgs`：去首尾空白、把连续空白压成一个空格、统一小写。
+  - `findByLaunch` 按 **kind + target + args** 三者一起判重：
+    - `url` → 按 URL 比（并限定必须是 `url` 类型的条目）；
+    - `appid` → 按 `appId` 比（UWP 的身份是 AppID，不是 `shell:AppsFolder\` 那层壳）；
+    - 其余（`path`）→ 比 `target` + 归一化后的 `args`。
+- `js/dialogs.js` 的 `ingestPaths()` 改用 `store.findByLaunch(launch)`，替掉原来的 `findByTarget` + `findByUrl` 两句。
+- 顺带改掉含糊的提示：被跳过的项现在会**点名**，例如
+  「没有新增：『豆包网页』已在面板中」，而不是「没有可添加的项目（1 个重复或无效）」。原提示把「重复」和「解析失败」混成一个数字，用户完全没法自查——这次要不是自己翻 `ps-bridge` 输出，光看提示确实会以为图标解析挂了。
+- 清掉 `ingestPaths()` 里只写不读的 `names` 变量。
+
+### 理由
+
+- **不改成「按 .lnk 原始路径判重」**：原始路径确实天然唯一，但同一份快捷方式从桌面拖一次、之后再从开始菜单拖一次，路径不同却该算同一个；而且用户把 .lnk 删掉重装后路径也会变。按「实际会执行什么」判重更贴合语义。
+- **不把 args 精确串比就直接忽略**：`WScript.Shell` 返回的 args 带前导空格（`" --profile-directory=…"`），Chrome 不同版本对 `--profile-directory=Default` 的大小写也可能不一致，所以先归一化再比。
+- **`findByUrl` 保持不变**：它在「添加网址」等处被用到，那里的宽松匹配（不比 kind）没有坏处，不动它以免引入别的行为差异。
+- **`ingestApps()`（应用扫描）暂不动**：扫描来源里开始菜单项的 `target` 存的是 **.lnk 自己的路径**（不是解析后的 exe），天然每个 PWA 都不同，不会撞；改它反而会改变既有行为。留了注释说明。
+
+### 验证
+
+- 真实数据复现：读取用户实际的 `%APPDATA%\uTools\shortcut-launcher\data.json`（147 条），对 `豆包网页.lnk` 解析出的 target+args 跑新旧两套判重 —— 旧逻辑命中 `chrome-元宝`，新逻辑不命中。根因确认。
+- 真实图标提取：`ps-bridge.ps1 -Mode icons` 对 `豆包网页.lnk` / `元宝.lnk` 均返回 256×256 PNG（119 KB / 95 KB），所以「添加失败」与图标无关。
+- 新增 `tools/dedup-test.html`：iframe 加载真实 `index.html`，用假 `resolvePaths` 喂 7 行给真实的 `ingestPaths()`，**16 条断言全 PASS**：
+  - 两个 PWA（target 相同、`--app-id` 不同）都能加进去，且落库后 target 确实相同
+  - target + args 全同的副本被跳过；同 exe 且都无参数的也被跳过
+  - 同 exe 参数不同（`--new-window`）能各自添加，args 原样保存
+  - `findByLaunch` 能区分参数、能归一化参数（前导/多余空格 + 大小写）、不跨 kind 误命中
+  - 同样输入再跑一次，`added = 0`（幂等）
+- `tools/uitest.html` 16 条断言复跑全 PASS；`node tools/release.js` 通过（12 文件 / 257 KB，`dist/plugin.json` 也是 1.5.2）；`node tools/smoke.js` 通过。
+
+---
+
 ## v1.5.1 — 修复二级菜单越界被裁（2026-10-11）
 
 ### 问题

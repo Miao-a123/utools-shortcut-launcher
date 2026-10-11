@@ -268,6 +268,55 @@
     return state.shortcuts.find(s => String(s.launch.target).toLowerCase().replace(/\/+$/, '') === a) || null
   }
 
+  /* 归一化启动参数：去首尾空白、把连续空白压成一个空格、统一小写。
+     这样 " --app-id=X" 与 "--app-id=x" 会被认成同一份参数。 */
+  function normArgs (a) {
+    return String(a === undefined || a === null ? '' : a).trim().replace(/\s+/g, ' ').toLowerCase()
+  }
+
+  /* 判断某个启动方式是否已经存在。
+     必须按「target + args」一起比，不能只比 target：
+     Chrome「将网页安装为应用」生成的快捷方式 target 全是
+     chrome_proxy.exe（Edge 是 msedge_proxy.exe），彼此只靠 --app-id= 区分；
+     只比 target 会把所有 PWA 判成同一个，除第一个外全部被当重复丢掉。
+     同理 code.exe --new-window、devenv.exe /edit 这类靠参数区分的快捷方式也受影响。
+
+     与 findByUrl 的区别：这里按 kind 严格匹配，不会拿一个 path 条目去顶 url 条目。 */
+  function findByLaunch (launch) {
+    if (!launch) return null
+    const kind = launch.kind || 'path'
+    const target = String(launch.target || '').trim()
+    if (!target) return null
+
+    if (kind === 'url') {
+      const url = target.toLowerCase().replace(/\/+$/, '')
+      return state.shortcuts.find(s => {
+        const l = s.launch || {}
+        if (l.kind !== 'url') return false
+        return String(l.target || '').toLowerCase().replace(/\/+$/, '') === url
+      }) || null
+    }
+
+    if (kind === 'appid') {
+      // UWP 的身份是 AppID，不是 shell:AppsFolder\ 这层壳
+      const id = String(launch.appId || target).toLowerCase()
+      return state.shortcuts.find(s => {
+        const l = s.launch || {}
+        if (l.kind !== 'appid') return false
+        return String(l.appId || l.target || '').toLowerCase() === id
+      }) || null
+    }
+
+    const low = target.toLowerCase()
+    const args = normArgs(launch.args)
+    return state.shortcuts.find(s => {
+      const l = s.launch || {}
+      if (l.kind === 'url' || l.kind === 'appid') return false
+      if (String(l.target || '').toLowerCase() !== low) return false
+      return normArgs(l.args) === args
+    }) || null
+  }
+
   /* ---------------- ordering / filtering ---------------- */
 
   function inCategory (categoryId) {
@@ -517,6 +566,8 @@
     setCategory,
     findByTarget,
     findByUrl,
+    findByLaunch,
+    normArgs,
     inCategory,
     visible,
     manualOrderOf,

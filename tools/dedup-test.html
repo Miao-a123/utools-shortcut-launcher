@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>dedup-test</title>
+  <style>
+    body { margin: 0; font: 13px/1.6 system-ui, sans-serif; background: #fff; color: #111 }
+    #frame { width: 782px; height: 524px; border: 1px solid #ccc; display: block }
+    #log { padding: 8px 10px; white-space: pre-wrap; font-family: monospace; font-size: 12px }
+  </style>
+</head>
+<body>
+  <h2 style="font-size:14px;margin:8px 10px">去重回归测试 —— 同一 exe 不同参数不能互相判重（Chrome「安装为应用」的 PWA）</h2>
+  <p style="font-size:12px;margin:0 10px 8px;color:#666">
+    无头运行：<code>chrome --headless=new --allow-file-access-from-files --virtual-time-budget=6000 --dump-dom tools/dedup-test.html</code>
+    接 <code>&lt;title&gt;</code> 看结果。<code>--allow-file-access-from-files</code> 不能省。
+  </p>
+  <iframe id="frame" src="../index.html?theme=dark"></iframe>
+  <div id="log"></div>
+  <script>
+  var frame = document.getElementById('frame')
+  var logEl = document.getElementById('log')
+
+  frame.addEventListener('load', function () { setTimeout(run, 900) })
+
+  function run () {
+    var out = []
+    function ok (n, c, x) { out.push((c ? 'PASS' : 'FAIL') + ':' + n + (x ? '[' + x + ']' : '')) }
+
+    var W, D, KL
+    try {
+      W = frame.contentWindow
+      D = frame.contentDocument
+      KL = W.KL                      // 第一次真读会触发跨域检查
+    } catch (e) {
+      out.push('ERROR:读不到 iframe 内容（跨域被拦）。file:// 下必须用 --allow-file-access-from-files')
+      return finish(out)
+    }
+    if (!KL || !KL.dialogs || !KL.store) { out.push('ERROR:KL 未加载'); return finish(out) }
+
+    var CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome_proxy.exe'
+    var PWA_A = ' --profile-directory=Default --app-id=nfjhphkhjelhenadmhihghlkccjdpdkk'
+    var PWA_B = ' --profile-directory=Default --app-id=bdhfnopbdjnbfijhacakfocddkkdhhpb'
+
+    /* 用假 resolvePaths 喂给真实的 ingestPaths，覆盖真实保存+去重链路 */
+    var ROWS = [
+      row('C:\\A\\豆包网页.lnk', CHROME, PWA_A),
+      row('C:\\A\\元宝.lnk', CHROME, PWA_B),                       // 同一 exe、不同 app-id → 必须能加进去
+      row('C:\\A\\豆包网页 (副本).lnk', CHROME, PWA_A),             // target+args 都一样 → 必须跳过
+      row('C:\\Tools\\Notepad.exe', 'C:\\Tools\\Notepad.exe', ''),
+      row('C:\\Tools\\Notepad 2.exe', 'C:\\Tools\\Notepad.exe', ''), // 同一 exe 都无参数 → 跳过
+      row('C:\\Tools\\Code.exe', 'C:\\Tools\\Code.exe', ''),
+      row('C:\\Tools\\Code 新窗口.lnk', 'C:\\Tools\\Code.exe', ' --new-window') // 参数不同 → 能加进去
+    ]
+    function row (path, target, args) {
+      return {
+        path: path, ok: true, kind: 'file', target: target, args: args,
+        workDir: 'C:\\', iconLocation: '', description: ''
+      }
+    }
+
+    var svc = W.services || W.window.services
+    if (!svc) { out.push('ERROR:window.services 不存在（预览桩没加载？）'); return finish(out) }
+    svc.resolvePaths = function () { return Promise.resolve({ ok: true, items: ROWS }) }
+
+    // ① 纯函数层：归一化与查找
+    ok('normArgs-trims-and-lowercases',
+      KL.store.normArgs('  --app-id=ABC   ') === '--app-id=abc',
+      JSON.stringify(KL.store.normArgs('  --app-id=ABC   ')))
+    ok('normArgs-null-safe', KL.store.normArgs(null) === '' && KL.store.normArgs(undefined) === '')
+
+    var before = KL.store.shortcuts.length
+
+    KL.dialogs.ingestPaths(['C:\\A\\豆包网页.lnk'], {}).then(function (r) {
+      var addedIds = KL.store.shortcuts.slice(before).map(function (s) { return s.id })
+
+      // 7 行输入：能加进去的是 豆包网页 / 元宝 / Notepad / Code / Code 新窗口 = 5，
+      // 被跳过的是 豆包网页(副本)（target+args 全同）、Notepad 2（同 exe 且都无参数）= 2
+      ok('added-exactly-5', r.added === 5, 'added=' + r.added + ' skipped=' + r.skipped)
+      ok('skipped-exactly-2', r.skipped === 2, 'skipped=' + r.skipped)
+
+      function byName (n) {
+        var hit = null
+        KL.store.shortcuts.forEach(function (s) { if (s.name === n) hit = s })
+        return hit
+      }
+      // 核心回归：两个 PWA 的 target 完全相同，只靠 args 区分，必须都在
+      ok('pwa-a-added', !!byName('豆包网页'))
+      ok('pwa-b-added', !!byName('元宝'))
+      ok('two-pwas-have-same-target',
+        !!byName('豆包网页') && !!byName('元宝') &&
+        byName('豆包网页').launch.target === byName('元宝').launch.target,
+        byName('豆包网页') ? byName('豆包网页').launch.target : 'missing')
+      ok('pwa-dup-skipped', !byName('豆包网页 (副本)'))
+      // 参数不同 → 不同条目
+      ok('same-exe-different-args-added', !!byName('Code 新窗口'))
+      ok('args-preserved', !!byName('豆包网页') &&
+        KL.store.normArgs(byName('豆包网页').launch.args) === KL.store.normArgs(PWA_A))
+      // 无参数的同 exe 仍要判重
+      ok('same-exe-no-args-skipped', !byName('Notepad 2'))
+
+      // ② findByLaunch 反向查找
+      var fA = KL.store.findByLaunch({ kind: 'path', target: CHROME, args: PWA_A })
+      var fB = KL.store.findByLaunch({ kind: 'path', target: CHROME, args: PWA_B })
+      ok('findByLaunch-distinguishes-args', fA && fB && fA.id !== fB.id,
+        (fA ? fA.name : 'null') + ' / ' + (fB ? fB.name : 'null'))
+      ok('findByLaunch-normalizes-args',
+        !!KL.store.findByLaunch({ kind: 'path', target: CHROME, args: '  ' + PWA_A.toUpperCase().replace('--PROFILE-DIRECTORY=DEFAULT', '--profile-directory=default') + '  ' }))
+      ok('findByLaunch-miss-on-new-args',
+        !KL.store.findByLaunch({ kind: 'path', target: CHROME, args: ' --app-id=zzzzzzzz' }))
+      ok('findByLaunch-not-cross-kind',
+        !KL.store.findByLaunch({ kind: 'url', target: CHROME, args: '' }))
+
+      // ③ 再跑一次同样的输入 → 一条都不该新增
+      var after = KL.store.shortcuts.length
+      KL.dialogs.ingestPaths(['C:\\A\\豆包网页.lnk'], {}).then(function (r2) {
+        ok('second-run-adds-nothing', r2.added === 0 && KL.store.shortcuts.length === after,
+          'added=' + r2.added + ' skipped=' + r2.skipped)
+        finish(out)
+      }).catch(function (e) { out.push('ERROR:' + e.message); finish(out) })
+    }).catch(function (e) {
+      out.push('ERROR:' + e.message + ' @ ' + String(e.stack || '').split('\n')[1])
+      finish(out)
+    })
+  }
+
+  function finish (out) {
+    var fails = out.filter(function (s) { return s.indexOf('PASS') !== 0 }).length
+    var title = (fails ? 'FAILED ' + fails + ' | ' : 'ALL PASS | ') + out.join(' ; ')
+    document.title = title
+    logEl.textContent = title.split(' ; ').join('\n')
+  }
+  </script>
+</body>
+</html>

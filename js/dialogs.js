@@ -8,9 +8,18 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.5.1'
+  const VERSION = '1.5.2'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.5.2',
+      date: '2026-10-11',
+      items: [
+        '修复：浏览器「将网页安装为应用」生成的快捷方式（豆包网页、元宝这类 PWA）添加不进去 —— 它们的可执行文件都是 chrome_proxy.exe，彼此只靠 --app-id 区分；原先的判重只看可执行文件，导致除第一个之外全被当成重复丢掉。现在改成按「程序 + 启动参数」判重',
+        '改进：同一个程序的不同启动方式（例如 code.exe --new-window）也能各自添加，不再互相判重',
+        '改进：添加时若被跳过，提示会直接点名是哪些项已存在（例如「没有新增：『豆包网页』已在面板中」），不再是含糊的「重复或无效」'
+      ]
+    },
     {
       v: '1.5.1',
       date: '2026-10-11',
@@ -626,20 +635,21 @@
     const rows = (res && res.items) || []
     const added = []
     const iconJobs = []
-    let skipped = 0
-    const names = []
+    const skippedNames = []      // 重复项的名字，用来把"为什么没加进去"讲清楚
+    let invalid = 0              // 解析失败的条数
 
     store.batch(() => {
       for (const r of rows) {
-        if (!r || !r.ok) { skipped++; continue }
+        if (!r || !r.ok) { invalid++; continue }
         const il = KL.icons.parseIconLocation(r.iconLocation)
         let name = stripExt(basename(r.path))
         if (r.kind === 'file' && !/\.(lnk|url|appref-ms)$/i.test(r.path) && !/\.exe$/i.test(r.path)) name = basename(r.path)
         const launch = r.kind === 'url'
           ? { kind: 'url', target: r.target, args: '', workDir: '', appId: '' }
           : { kind: 'path', target: r.target, args: r.args || '', workDir: r.workDir || '', appId: '' }
-        if (r.target && store.findByTarget(r.target)) { skipped++; continue }
-        if (r.kind === 'url' && store.findByUrl(r.target)) { skipped++; continue }
+        // 按 target + args 判重（见 store.findByLaunch）。只比 target 会让
+        // Chrome「安装为应用」生成的 PWA 快捷方式互相误判为重复。
+        if (store.findByLaunch(launch)) { skippedNames.push(name || '未命名'); continue }
         const sc = store.addShortcut({
           name: name || '未命名',
           launch: launch,
@@ -651,7 +661,6 @@
         })
         sc.iconLocation = r.iconLocation || ''
         added.push(sc)
-        names.push(sc.name)
         if (r.kind === 'url') {
           const job = { id: sc.id, url: r.target }
           // 仅当 IconFile 是独立图片时才作为 favicon 的兜底（Steam 的 .ico、微信小程序等）
@@ -665,11 +674,30 @@
       }
     })
 
-    if (added.length) toast('已添加 ' + added.length + ' 个快捷方式' + (skipped ? '（跳过 ' + skipped + ' 个重复/无效项）' : ''))
-    else if (skipped) toast('没有可添加的项目（' + skipped + ' 个重复或无效）', 'error')
+    const skipped = skippedNames.length + invalid
+    // 被跳过的项直接点名，否则"添加失败"看起来像是解析不出来，用户没法自查
+    const skipBits = []
+    if (skippedNames.length) skipBits.push(summarizeNames(skippedNames) + ' 已在面板中')
+    if (invalid) skipBits.push(invalid + ' 个无法解析')
+
+    if (added.length) {
+      toast('已添加 ' + added.length + ' 个快捷方式' + (skipBits.length ? '；跳过 ' + skipBits.join('，') : ''))
+    } else if (skipBits.length) {
+      toast('没有新增：' + skipBits.join('，'), 'error')
+    } else {
+      // 走到这里说明解析层什么都没返回 —— 别再静默了，否则又是一次"点了没反应"
+      toast('没能解析出可添加的内容（共 ' + list.length + ' 项）', 'error')
+    }
 
     if (added.length) hydrate(added, iconJobs)
     return { added: added.length, skipped: skipped }
+  }
+
+  /* 把被跳过的名字拼成一句人话，最多列 3 个，其余折成"等 N 项" */
+  function summarizeNames (list) {
+    const max = 3
+    const head = list.slice(0, max).map(n => '「' + n + '」').join('、')
+    return list.length > max ? head + ' 等 ' + list.length + ' 项' : head
   }
 
   function hydrate (shortcuts, jobs) {
