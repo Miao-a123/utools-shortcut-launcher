@@ -37,6 +37,8 @@
 
 `preload.js` 末尾无条件 `log('contextBridge expose skipped', e.message)` —— 但 uTools 默认关闭 `contextIsolation`，这时 `contextBridge` 本来就不可用，`window.services` 已经挂好了，功能完全正常。结果是**每次进入插件都往 `plugin.log` 写一行看起来像报错的记录**（用户机器上累积了 60 多条）。现在只在"`contextIsolation` 开着却依然失败"时才记录 —— 那才是真问题。
 
+同时新增 `services.clearLog()` 并在「设置 → 其他」加了「清空日志」按钮 —— 之前攒了一堆日志只能去数据目录手动删。**注意：改的是 `preload.js`，需要完全重启 uTools 才生效**（只重载插件页面不够）。
+
 ### 验证
 
 - `tools/layout-test.html` 扩到 **35 条断言全 PASS**，其中新增的批量摆放部分是**真实 DragEvent 全链路**（`dragstart → dragover → drop`，用 `new DataTransfer()` 构造）：

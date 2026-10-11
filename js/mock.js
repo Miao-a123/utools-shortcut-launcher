@@ -194,6 +194,7 @@
     openDataDir: function () { window.services.notify('预览模式：没有真实数据目录') },
     revealPath: function () {},
     readLog: function () { return '(浏览器预览模式，无日志)' },
+    clearLog: function () { return { ok: true } },
 
     loadData: function () {
       if (PARAMS.get('empty')) return { version: 1, settings: {}, categories: [], shortcuts: [] }

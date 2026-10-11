@@ -19,7 +19,7 @@
         '拖动时会按选区形状铺出一组虚线落点，能提前看到整组会落在哪；整组放不下时会自动挪到最近的合适位置，形状依然不变',
         '多选工具条上会提示「拖动可整体摆放」',
         '新增设置项「浏览器图标」：可选「联网获取」或「仅本地」。选「仅本地」后插件完全离线（抓网站图标是它唯一会联网的功能），网址图标退回快捷方式自带的图标文件，没有就用字形图标',
-        '修复：不再往日志里重复记录「contextBridge expose skipped」—— 那是 uTools 关闭 contextIsolation 时的正常现象，不是错误'
+        '修复：不再往日志里重复记录「contextBridge expose skipped」—— 那是 uTools 关闭 contextIsolation 时的正常现象，不是错误；顺带在「设置 → 其他」加了「清空日志」按钮'
       ]
     },
     {
@@ -1859,8 +1859,15 @@
         }
       })
     })
+    const logClear = el('div', 'chip', '清空日志')
+    logClear.addEventListener('click', () => {
+      if (!S.clearLog) { toast('当前环境不支持', 'error'); return }
+      const r = S.clearLog()
+      toast(r && r.ok ? '日志已清空' : '清空失败', r && r.ok ? '' : 'error')
+    })
     dangerRow.appendChild(resetBtn)
     dangerRow.appendChild(logBtn)
+    dangerRow.appendChild(logClear)
     body.appendChild(field('其他', dangerRow))
 
     body.appendChild(el('div', '', '<div style="height:6px"></div>'))

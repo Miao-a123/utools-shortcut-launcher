@@ -648,6 +648,15 @@ const services = {
   readLog () {
     try { return fs.readFileSync(LOG_FILE, 'utf8').slice(-20000) } catch (e) { return '' }
   },
+  clearLog () {
+    try {
+      ensureDirs()
+      fs.writeFileSync(LOG_FILE, '')
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: e.message }
+    }
+  },
 
   loadData: readData,
   saveData: writeData,
