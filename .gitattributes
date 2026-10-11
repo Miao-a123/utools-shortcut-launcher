@@ -1,2 +1,10 @@
 * text=auto eol=lf
 *.png binary
+
+# ps-bridge.ps1 带一个刻意保留的 UTF-8 BOM（PowerShell 5.1 会把无 BOM 的脚本按
+# ANSI 解码，里面的非 ASCII 就成乱码了），明确声明不参与任何文本转换，
+# 免得哪天被顺手"整理"掉。
+tools/ps-bridge.ps1 -text
+
+# 二进制
+*.ico binary
