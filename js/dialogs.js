@@ -8,9 +8,17 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.5.2'
+  const VERSION = '1.5.3'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.5.3',
+      date: '2026-10-11',
+      items: [
+        '新增：无字模式（隐藏名称）下，光标悬浮在图标上时会在光标处弹出一个小气泡显示图标名称 —— 普通图标、小文件夹、以及大文件夹内部的图标都会弹；气泡跟着光标移动，靠近窗口边缘时自动翻到另一侧，不会跑出窗口',
+        '细节：按住鼠标拖拽 / 框选 / 拉大小的时候不弹气泡，右键菜单弹出、切换分类、滚动时也会自动收起；大文件夹自己的名称条本来就看得见，所以悬停它不重复弹'
+      ]
+    },
     {
       v: '1.5.2',
       date: '2026-10-11',

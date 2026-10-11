@@ -197,16 +197,21 @@
     loadData: function () {
       if (PARAMS.get('empty')) return { version: 1, settings: {}, categories: [], shortcuts: [] }
       const theme = PARAMS.get('theme')
+      // ?labels=0 直接进无字模式（截图 / 手工验证名称气泡用）
+      const labels = PARAMS.get('labels')
+      const over = {}
+      if (theme) over.theme = theme
+      if (labels !== null) over.showLabels = !(labels === '0' || labels === 'off' || labels === 'false')
       try {
         const raw = localStorage.getItem(KEY)
         if (raw) {
           const d = JSON.parse(raw)
-          if (theme) d.settings = Object.assign({}, d.settings, { theme: theme })
+          d.settings = Object.assign({}, d.settings, over)
           return d
         }
       } catch (e) {}
       const d = mockData()
-      if (theme) d.settings.theme = theme
+      Object.assign(d.settings, over)
       try { localStorage.setItem(KEY, JSON.stringify(d)) } catch (e) {}
       return d
     },

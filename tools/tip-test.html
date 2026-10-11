@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>tip-test</title>
+  <style>
+    body { margin: 0; font: 13px/1.6 system-ui, sans-serif; background: #fff; color: #111 }
+    #frame { width: 782px; height: 524px; border: 1px solid #ccc; display: block }
+    #log { padding: 8px 10px; white-space: pre-wrap; font-family: monospace; font-size: 12px }
+  </style>
+</head>
+<body>
+  <h2 style="font-size:14px;margin:8px 10px">名称气泡回归测试 —— 无字模式下光标悬浮弹出图标名称</h2>
+  <p style="font-size:12px;margin:0 10px 8px;color:#666">
+    无头运行：<code>chrome --headless=new --allow-file-access-from-files --virtual-time-budget=12000 --dump-dom tools/tip-test.html</code>
+    接 <code>&lt;title&gt;</code> 看结果。<code>--allow-file-access-from-files</code> 不能省。
+  </p>
+  <iframe id="frame" src="../index.html?theme=dark&labels=0"></iframe>
+  <div id="log"></div>
+  <script>
+  var frame = document.getElementById('frame')
+  var logEl = document.getElementById('log')
+
+  frame.addEventListener('load', function () { setTimeout(run, 900) })
+
+  function run () {
+    var out = []
+    function ok (n, c, x) { out.push((c ? 'PASS' : 'FAIL') + ':' + n + (x ? '[' + x + ']' : '')) }
+    function sleep (ms) { return new Promise(function (r) { setTimeout(r, ms) }) }
+
+    var W, D, KL
+    try {
+      W = frame.contentWindow
+      D = frame.contentDocument
+      KL = W.KL
+    } catch (e) {
+      out.push('ERROR:读不到 iframe 内容（跨域被拦）。file:// 下必须用 --allow-file-access-from-files')
+      return finish(out)
+    }
+    if (!KL || !KL.ui || !KL.ui.tip) { out.push('ERROR:KL.ui.tip 不存在'); return finish(out) }
+
+    var WAIT = 300                    // 120ms 延迟 + 余量
+    var vw = W.innerWidth, vh = W.innerHeight
+
+    function tipEl () { return D.querySelector('body > .tip') }
+    function isShown () { var t = tipEl(); return !!(t && t.classList.contains('show')) }
+    function tipText () { var t = tipEl(); return t ? t.textContent : '' }
+    function rect () { var t = tipEl(); return t ? t.getBoundingClientRect() : null }
+
+    function inside (r) { return r.left >= 5 && r.top >= 5 && r.right <= vw - 5 && r.bottom <= vh - 5 }
+
+    function hover (node, x, y, buttons) {
+      node.dispatchEvent(new W.MouseEvent('mouseenter', { clientX: x, clientY: y, buttons: buttons || 0 }))
+      node.dispatchEvent(new W.MouseEvent('mousemove', { clientX: x, clientY: y, buttons: buttons || 0, bubbles: true }))
+    }
+    function leave (node) { node.dispatchEvent(new W.MouseEvent('mouseleave')) }
+    function one (sel) { return D.querySelector(sel) }
+    function nameOf (node) {
+      var l = node.querySelector('.label')
+      return (l ? l.textContent : node.textContent).trim()
+    }
+
+    KL.store.setSetting('showLabels', false)
+
+    sleep(150).then(function () {
+      var plain = one('.grid > .tile:not(.folder)')
+      var mini = one('.grid > .tile.folder-mini')
+      var big = one('.grid > .tile.folder-big')
+      var inner = one('.grid > .tile.folder-big .inner-tile')
+      if (!plain || !mini || !big || !inner) {
+        out.push('ERROR:缺少测试目标 plain=' + !!plain + ' mini=' + !!mini + ' big=' + !!big + ' inner=' + !!inner)
+        return finish(out)
+      }
+
+      // ① 普通图标：悬浮 → 出现，文字正确
+      hover(plain, 200, 200)
+      return sleep(WAIT).then(function () {
+        ok('shows-in-hide-labels-mode', isShown())
+        ok('text-matches-tile-name', tipText() === nameOf(plain), JSON.stringify(tipText()))
+        ok('pointer-events-none', W.getComputedStyle(tipEl()).pointerEvents === 'none',
+          W.getComputedStyle(tipEl()).pointerEvents)
+
+        // ② 位置贴着光标
+        var r = rect()
+        ok('placed-near-cursor', Math.abs(r.left - 214) < 2 && Math.abs(r.top - 218) < 2,
+          Math.round(r.left) + ',' + Math.round(r.top))
+
+        // ③ 跟着光标移动
+        hover(plain, 320, 260)
+        return sleep(40).then(function () {
+          var r2 = rect()
+          ok('follows-cursor', Math.round(r2.left) === 334 && Math.round(r2.top) === 278,
+            Math.round(r2.left) + ',' + Math.round(r2.top))
+
+          // ④ 贴右下角时夹进视口
+          hover(plain, vw - 4, vh - 4)
+          return sleep(40).then(function () {
+            var r3 = rect()
+            ok('clamped-at-bottom-right', inside(r3),
+              [Math.round(r3.left), Math.round(r3.top), Math.round(r3.right), Math.round(r3.bottom)].join(',') +
+              ' win=' + vw + 'x' + vh)
+
+            // ⑤ 小文件夹（1×1）标题同样被隐藏 → 要弹
+            leave(plain)
+            hover(mini, 300, 300)
+            return sleep(WAIT).then(function () {
+              ok('shows-for-mini-folder', isShown() && tipText() === nameOf(mini), JSON.stringify(tipText()))
+              leave(mini)
+
+              // ⑥ 大文件夹自己有名条 → 不弹
+              hover(big, 300, 300)
+              return sleep(WAIT).then(function () {
+                ok('no-tip-for-big-folder-title', !isShown())
+                leave(big)
+
+                // ⑦ 大文件夹内部的图标标题被隐藏 → 要弹
+                hover(inner, 320, 320)
+                return sleep(WAIT).then(function () {
+                  ok('shows-for-inner-tile', isShown() && tipText() === nameOf(inner), JSON.stringify(tipText()))
+                  leave(inner)
+
+                  // ⑧ 移出图标 → 收起
+                  hover(plain, 200, 200)
+                  return sleep(WAIT).then(function () {
+                    ok('shown-before-leave', isShown())
+                    leave(plain)
+                    return sleep(30).then(function () {
+                      ok('hides-on-mouseleave', !isShown())
+
+                      // ⑨ 按住鼠标（橡皮筋框选 / 拖拽）→ 不弹
+                      hover(plain, 200, 200, 1)
+                      return sleep(WAIT).then(function () {
+                        ok('no-tip-while-button-held', !isShown())
+                        leave(plain)
+
+                        // ⑩ 右键菜单弹出 → 收起
+                        hover(plain, 200, 200)
+                        return sleep(WAIT).then(function () {
+                          var shownBefore = isShown()
+                          KL.grid.showTileMenu(
+                            { id: plain.dataset.id, name: 'x', launch: { kind: 'path', target: 'x' } }, 200, 200)
+                          return sleep(30).then(function () {
+                            ok('tip-was-shown-before-menu', shownBefore)
+                            ok('hides-when-menu-opens', !isShown())
+                            KL.ui.closeMenu()
+
+                            // ⑪ 悬浮中重渲染 → 收起
+                            hover(plain, 200, 200)
+                            return sleep(WAIT).then(function () {
+                              ok('tip-shown-before-rerender', isShown())
+                              KL.grid.render()
+                              ok('hides-on-rerender', !isShown())
+
+                              // ⑫ 显示标题时不弹
+                              KL.store.setSetting('showLabels', true)
+                              return sleep(150).then(function () {
+                                var t2 = one('.grid > .tile:not(.folder)')
+                                hover(t2, 200, 200)
+                                return sleep(WAIT).then(function () {
+                                  ok('no-tip-when-labels-visible', !isShown())
+                                  leave(t2)
+
+                                  // ⑬ 长名称不溢出
+                                  KL.store.setSetting('showLabels', false)
+                                  return sleep(150).then(function () {
+                                    var t3 = one('.grid > .tile:not(.folder)')
+                                    hover(t3, 400, 300)
+                                    return sleep(WAIT).then(function () {
+                                      var te = tipEl()
+                                      var cs = W.getComputedStyle(te)
+                                      ok('long-name-not-overflowing',
+                                        te.scrollWidth <= te.clientWidth + 1 && te.scrollHeight <= te.clientHeight + 1,
+                                        'sw=' + te.scrollWidth + ' cw=' + te.clientWidth)
+                                      ok('max-width-bounded',
+                                        parseFloat(cs.maxWidth) > 0 && te.getBoundingClientRect().width <= 341,
+                                        cs.maxWidth + ' / w=' + Math.round(te.getBoundingClientRect().width))
+                                      ok('one-tip-element-only', D.querySelectorAll('body > .tip').length === 1,
+                                        D.querySelectorAll('body > .tip').length)
+                                      leave(t3)
+                                      finish(out)
+                                    })
+                                  })
+                                })
+                              })
+                            })
+                          })
+                        })
+                      })
+                    })
+                  })
+                })
+              })
+            })
+          })
+        })
+      })
+    }).catch(function (e) {
+      out.push('ERROR:' + e.message + ' @ ' + String(e.stack || '').split('\n')[1])
+      finish(out)
+    })
+  }
+
+  function finish (out) {
+    var fails = out.filter(function (s) { return s.indexOf('PASS') !== 0 }).length
+    var title = (fails ? 'FAILED ' + fails + ' | ' : 'ALL PASS | ') + out.join(' ; ')
+    document.title = title
+    logEl.textContent = title.split(' ; ').join('\n')
+  }
+  </script>
+</body>
+</html>

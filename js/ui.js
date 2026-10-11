@@ -33,6 +33,77 @@
     }, ms || (type === 'error' ? 3600 : 1900))
   }
 
+  /* ---------------- 光标名称提示（无字模式） ----------------
+     无字模式下图标不显示标题，光靠图形认不出是哪个，所以悬浮时在光标处
+     弹一个小气泡显示名称。气泡 pointer-events:none，永远不吃鼠标事件，
+     鼠标从图标移进气泡也不会把 hover 打断。 */
+
+  const TIP_DELAY = 120          // ms。太短会在快速划过一排图标时闪个不停
+  const TIP_OX = 14              // 相对光标的偏移
+  const TIP_OY = 18
+  const TIP_M = 6                // 距视口边缘的最小留白
+
+  let tipEl = null
+  let tipTimer = null
+  let tipX = 0
+  let tipY = 0
+
+  function tipRoot () {
+    if (!tipEl) {
+      tipEl = el('div', 'tip')
+      document.body.appendChild(tipEl)
+    }
+    return tipEl
+  }
+
+  // 贴着光标放；右边/下边放不下就翻到光标另一侧，仍放不下则夹进视口
+  function tipPlace (x, y) {
+    const t = tipRoot()
+    const r = t.getBoundingClientRect()
+    let left = x + TIP_OX
+    let top = y + TIP_OY
+    if (left + r.width > window.innerWidth - TIP_M) left = window.innerWidth - TIP_M - r.width
+    if (left < TIP_M) left = TIP_M
+    if (top + r.height > window.innerHeight - TIP_M) {
+      top = y - r.height - TIP_OY + 6
+      if (top < TIP_M) top = TIP_M
+    }
+    t.style.left = Math.round(left) + 'px'
+    t.style.top = Math.round(top) + 'px'
+  }
+
+  function tipHide () {
+    if (tipTimer) { clearTimeout(tipTimer); tipTimer = null }
+    if (tipEl) tipEl.classList.remove('show')
+  }
+
+  // 进入某个带名称的元素
+  function tipHover (text, x, y) {
+    if (!text) return tipHide()
+    tipX = x
+    tipY = y
+    const t = tipRoot()
+    const showing = t.classList.contains('show')
+    t.textContent = text
+    // 已经在显示 → 直接换字跟着走；否则等一小段延迟再弹（防快速划过时乱闪）
+    if (showing) return tipPlace(x, y)
+    if (tipTimer) clearTimeout(tipTimer)
+    tipTimer = setTimeout(() => {
+      tipTimer = null
+      t.classList.add('show')
+      tipPlace(tipX, tipY)
+    }, TIP_DELAY)
+  }
+
+  // 在元素内移动 → 气泡跟着光标走
+  function tipMove (x, y) {
+    tipX = x
+    tipY = y
+    if (tipEl && tipEl.classList.contains('show')) tipPlace(x, y)
+  }
+
+  const tip = { hover: tipHover, move: tipMove, hide: tipHide }
+
   /* ---------------- progress bar ---------------- */
 
   let progressEl = null
@@ -178,6 +249,7 @@
 
   function menu (items, opts) {
     closeMenu()
+    tipHide()                 // 菜单弹出时名称气泡要让位
     const o = opts || {}
     menuEl = el('div', 'ctx show')
     buildItems(menuEl, items)
@@ -206,6 +278,7 @@
 
   function modal (opts) {
     const o = opts || {}
+    tipHide()
     const mask = el('div', 'mask' + (o.placement ? ' ' + o.placement : ''))
     const box = el('div', 'modal' + (o.size ? ' ' + o.size : '') + (o.placement ? ' anchored' : ''))
     const head = el('div', 'modal-head')
@@ -348,6 +421,7 @@
     el: el,
     esc: esc,
     toast: toast,
+    tip: tip,
     progress: progress,
     menu: menu,
     closeMenu: closeMenu,

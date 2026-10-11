@@ -23,6 +23,26 @@
 
   function clamp (v, a, b) { return Math.max(a, Math.min(b, v)) }
 
+  /* 无字模式（隐藏标题）下，光标悬浮在图标上时在光标处弹出名称气泡。
+     标题还显示着的时候不弹，免得两处重复显示同一个名字。
+     注意 mouseenter / mouseleave 不冒泡：大文件夹内部的图标不会触发
+     外层文件夹的悬浮逻辑，反之亦然。 */
+  function attachNameTip (node, name) {
+    node.addEventListener('mouseenter', e => {
+      if (store.settings.showLabels || e.buttons) return
+      KL.ui.tip.hover(name, e.clientX, e.clientY)
+    })
+    node.addEventListener('mousemove', e => {
+      if (store.settings.showLabels) return
+      // 按着鼠标不放（橡皮筋框选 / 拖大小 / 拖拽排序）时一律不弹，
+      // 否则从图标上划拉过去会满屏气泡。用 e.buttons 而不是自己记状态：
+      // 鼠标在窗口外松开时收不到 mouseup，状态会卡死。
+      if (e.buttons) return KL.ui.tip.hide()
+      KL.ui.tip.move(e.clientX, e.clientY)
+    })
+    node.addEventListener('mouseleave', () => KL.ui.tip.hide())
+  }
+
   function currentCell () {
     return clamp(parseInt(store.settings.cell, 10) || 92, 64, 160)
   }
@@ -93,6 +113,7 @@
       label.title = sc.name
       tile.appendChild(label)
       if (count) tile.appendChild(el('div', 'folder-badge', String(count)))
+      attachNameTip(tile, sc.name)      // 小文件夹的标题同样会被无字模式隐藏
     } else {
       // 大文件夹（m×n）：内部平铺，可直接点图标
       tile.classList.add('folder-big')
@@ -212,6 +233,7 @@
     label.title = sc.name
     tile.appendChild(label)
     if (sc.missing) tile.appendChild(el('div', 'badge'))
+    attachNameTip(tile, sc.name)
 
     tile.addEventListener('click', e => {
       e.stopPropagation()
@@ -427,6 +449,8 @@
     const list = store.visible(currentCategory, keyword)
     gridEl.style.setProperty('--cell', currentCell() + 'px')
     gridEl.classList.toggle('hide-labels', !settings.showLabels)
+    // 重渲染会把正在悬浮的节点换掉，mouseleave 不会再触发 —— 主动收起气泡
+    KL.ui.tip.hide()
     gridEl.innerHTML = ''
     for (const k in tileNodes) delete tileNodes[k]
 
@@ -481,6 +505,8 @@
       badge.title = '目标不存在'
       tile.appendChild(badge)
     }
+
+    attachNameTip(tile, sc.name)
 
     tile.addEventListener('click', e => {
       const mode = store.settings.launchOnDoubleClick
@@ -990,6 +1016,13 @@
       if (selected.size) clearSelection()
     })
     contentEl.addEventListener('mousedown', beginRubber)
+
+    // 无字模式的名称气泡：这些情况下 mouseleave 不一定会来，统一兜底收起，
+    // 否则气泡会"粘"在屏幕上（拖拽 / 滚动 / 切窗口 / 鼠标移出窗口时）
+    document.addEventListener('dragstart', () => KL.ui.tip.hide())
+    window.addEventListener('blur', () => KL.ui.tip.hide())
+    window.addEventListener('scroll', () => KL.ui.tip.hide(), true)
+    document.addEventListener('mouseleave', () => KL.ui.tip.hide())
 
     store.on((type, payload) => {
       if (type === 'shortcuts' || type === 'settings') render()

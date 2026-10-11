@@ -18,6 +18,7 @@
 - **批量操作**：橡皮筋框选（`Ctrl` 追加）/ `Ctrl+A` 多选后统一移动分类、装进文件夹、改尺寸、刷新图标、删除。
 - **文件夹 / 大文件夹**：同一个容器的两种形态 —— 1×1 是小文件夹（点开弹层操作），调大成 m×n 就变成大文件夹（内部图标平铺、可直接点击）。文件夹可重命名、设背景色；图标可拖入 / 拖出；大文件夹内支持**滚轮滚动**浏览，点标题栏可打开弹层看全。
 - **外观**：图标格子大小 / 圆角 / 侧边栏宽度 / 图标文字开关均可调；图标格子支持**背景色（含不透明度调节）**与**描边（颜色 + 粗细）**；文件夹内图标大小可选 小 / 中 / 大 / 与主格一致。
+- **无字模式的名称气泡**：隐藏图标文字后，光标停在图标上会在光标处弹出一个小气泡显示名称（跟着光标走，靠边自动翻向，按住鼠标拖拽/框选时不弹）。
 - **其他**：全局搜索（`Ctrl+F`，打开插件后直接敲键盘即可搜索）、右键菜单、目标丢失检测（红点 + 一键清理）、数据导入/导出、深/浅色跟随 uTools 主题、单击/双击打开、启动参数与工作目录；设置面板从**左下角**弹出，不遮挡图标区。
 
 > 面向用户的完整说明见 **[docs/使用手册.md](docs/使用手册.md)**。
@@ -34,7 +35,8 @@
 >
 > 预览调试钩子（URL 参数）：`?dlg=scan|bookmarks|settings|add|edit|icon|folder|confirm` 直接打开对应弹窗；
 > `?dlg=menu&x=660&y=120&expand=图标尺寸` 在指定位置打开图标右键菜单并强制展开某个二级菜单
-> （无头截图里没法触发 `:hover`，所以用它来验证/出图菜单边界效果）；`?debug` 把主题与计算色写进 `document.title`；`?empty` 渲染空状态。
+> （无头截图里没法触发 `:hover`，所以用它来验证/出图菜单边界效果）；`?labels=0` 直接进无字模式（验证名称气泡）；
+> `?debug` 把主题与计算色写进 `document.title`；`?empty` 渲染空状态。
 
 ## 使用说明
 
@@ -70,6 +72,7 @@ utools-shortcut-launcher/
 │   ├── release.js         # 生成发布目录 dist/ 并做上架合规检查
 │   ├── uitest.html        # UI 回归测试（iframe 加载真实页面，校验菜单边界）
 │   ├── dedup-test.html    # 去重回归测试（同一 exe 不同参数不能互相判重）
+│   ├── tip-test.html      # 名称气泡回归测试（无字模式下的悬浮提示）
 │   ├── selftest.js        # 桥接层自测（图标/lnk/应用扫描）
 │   ├── smoke.js           # 渲染冒烟校验
 │   └── make-logo.py       # logo 生成脚本
@@ -137,10 +140,14 @@ chrome --headless=new --allow-file-access-from-files --virtual-time-budget=7000 
 # 去重回归测试：同一 exe 不同启动参数（Chrome「安装为应用」的 PWA）不能互相判重
 chrome --headless=new --allow-file-access-from-files --virtual-time-budget=8000 \
   --dump-dom "file:///<repo>/tools/dedup-test.html"
+
+# 名称气泡回归测试：无字模式下悬浮弹名称、跟光标、边缘夹取、拖拽时不弹
+chrome --headless=new --allow-file-access-from-files --virtual-time-budget=12000 \
+  --dump-dom "file:///<repo>/tools/tip-test.html"
 ```
 
-`tools/uitest.html` 与 `tools/dedup-test.html` 都直接 iframe 引入 `../index.html`，断言结果写在
-`document.title` 里，用 `--dump-dom` 回读即可；不复制页面结构，所以页面改了测试不会悄悄失效。
+`tools/uitest.html`、`tools/dedup-test.html`、`tools/tip-test.html` 都直接 iframe 引入 `../index.html`，
+断言结果写在 `document.title` 里，用 `--dump-dom` 回读即可；不复制页面结构，所以页面改了测试不会悄悄失效。
 `dedup-test.html` 会临时替换 iframe 里的 `window.services.resolvePaths` 喂假数据，跑完在
 in-memory 的 mock 数据里留下几条测试条目 —— 用单独的 `--user-data-dir` 跑即可，别拿它去动真实数据。
 

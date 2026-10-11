@@ -8,6 +8,48 @@
 
 ---
 
+## v1.5.3 — 无字模式下光标悬浮显示图标名称（2026-10-11）
+
+### 问题
+
+开启「无字模式」（`showLabels: false`）后图标不显示标题，纯靠图形认不出来是哪个，尤其是几个图标配色相近或者自己刚换过图标的时候。
+
+### 修复
+
+新增「光标名称气泡」：无字模式下光标停在图标上，就在光标处弹出一个小气泡显示名称。
+
+- `js/ui.js` 新增 `KL.ui.tip`，三个方法：
+  - `hover(text, x, y)`：进入某个带名称的元素时调用。**首次弹出有 120ms 延迟**；已经在显示时直接换字（在同一排图标上划过时不会一闪一闪）。`text` 为空则收起。
+  - `move(x, y)`：在元素内移动时调用，气泡跟着光标走。
+  - `hide()`：收起。
+  - 位置：贴在光标右下（+14 / +18），右边放不下就左移夹进视口，下边放不下就翻到光标<b>上方</b>，始终留 6px 视口边距。
+- `css/style.css` 新增 `.tip`：`position: fixed`、`z-index: 85`、`max-width: min(340px, calc(100vw - 16px))`、`word-break: break-all`，底色用 `var(--text)`、字色用 `var(--bg)`（两个主题下都是高对比的"反色小胶囊"）。**`pointer-events: none` 是必须的**——否则鼠标从图标移进气泡会触发图标的 `mouseleave`，气泡就会闪。
+- `js/grid.js` 新增 `attachNameTip(node, name)` 并接到三处：`buildTile`（普通图标）、`buildFolderTile` 的 `folder-mini` 分支（小文件夹的标题同样被无字模式隐藏）、`buildInnerTile`（大文件夹内部的图标）。
+- 收起时机（`mouseleave` 不一定会来的情况统一兜底）：`mouseleave` 离开图标、`render()` 重渲染、`KL.ui.menu()` / `KL.ui.modal()` 打开、`dragstart`、窗口 `blur`、任意元素滚动（capture 监听）、鼠标移出窗口。
+
+### 理由
+
+- **按 `!showLabels` 判断而不是看 DOM 上有没有 `.label`**：文件夹视图（`.fv-name`）的名称不受无字模式影响、始终可见，用设置项判断语义最清楚。
+- **大文件夹（m×n）自己不弹**：它的 `.folder-name` 名称条一直可见，再弹一个同名气泡是噪音。内部的 `.inner-tile` 标题是被隐藏的，所以内部图标照弹。
+- **`mouseenter` / `mouseleave` 不冒泡正好合适**：大文件夹内部的图标悬停不会触发外层文件夹的逻辑，反之亦然，不需要额外 stopPropagation。
+- **用 `e.buttons` 判断"鼠标是否按着"，而不是自己维护状态**：橡皮筋框选、拖拽排序、拉大小都会让光标从图标上划过，用状态机的话鼠标在窗口外松开收不到 `mouseup` 会卡死，`e.buttons` 是天然自愈的。
+- **被否决的方案**：给 `.tile` 加 `title` 属性用系统原生 tooltip。理由——原生 tooltip 出现位置由系统决定（通常钉在元素边缘），不跟着光标走，也夹不进自定义样式，和「在光标处弹出」的要求不符。原有的 `label.title` 保留着，只是无字模式下 label 被 `display:none`，不会触发。
+
+### 验证
+
+- 新增 `tools/tip-test.html`：iframe 加载真实 `index.html?theme=dark&labels=0`，派发真实鼠标事件，**20 条断言全 PASS**：
+  - 无字模式悬浮 → 弹出且文字与图标名一致；`pointer-events` 为 `none`
+  - 位置贴着光标（`+14/+18`）；`mousemove` 后跟着走（`334,278`）
+  - 贴到窗口右下角（`vw-4, vh-4`）时气泡被夹在 `711,480 → 776,508`，全在 `782×524` 内
+  - 小文件夹 `常用小工具` 会弹；大文件夹自己不弹；大文件夹内的 `Git Bash` 会弹
+  - 移出图标 / 按住鼠标（`buttons: 1`）/ 右键菜单弹出 / 重渲染 → 都收起
+  - 显示标题时不弹；长名称不溢出（`scrollWidth === clientWidth`）；`.tip` 元素始终只有一个
+- 无头截图复核：`.tip` 的 `getBoundingClientRect()` 实测 `VS Code@616,285`、`Git Bash@251,139`，并在截图里按像素确认了高亮胶囊的存在。
+- 顺带给预览桩加了 `?labels=0` 开关（直接进无字模式），截图与手工验证都用得上。
+- `uitest` 16 条、`dedup-test` 16 条全 PASS；`release.js`（12 文件 / 258 KB）与 `smoke.js` 通过。
+
+---
+
 ## v1.5.2 — 修复 PWA 快捷方式添加不进去（2026-10-11）
 
 ### 问题

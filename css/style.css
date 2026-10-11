@@ -760,6 +760,29 @@ select.input { padding-right: 6px; }
 .toast.error { color: var(--danger); border-color: var(--danger); }
 @keyframes pop { from { opacity: 0; transform: translateY(6px); } }
 
+/* ---------------- 光标名称提示（无字模式） ----------------
+   无字模式下图标不显示标题，悬浮时在光标处弹一个小气泡显示名称。
+   pointer-events:none 必须留着：否则鼠标从图标移进气泡会触发图标的
+   mouseleave，气泡一闪一闪。 */
+
+.tip {
+  position: fixed; left: 0; top: 0;
+  z-index: 85;
+  max-width: min(340px, calc(100vw - 16px));
+  padding: 5px 9px;
+  border-radius: 7px;
+  /* 用 --text 当底色、--bg 当字色：两个主题下都是高对比的"反色小胶囊" */
+  background: var(--text); color: var(--bg);
+  border: 1px solid var(--border-strong);
+  font-size: 12px; line-height: 1.35;
+  word-break: break-all;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .1s ease-out;
+}
+.tip.show { opacity: 1; }
+
 .hidden { display: none !important; }
 .muted { color: var(--text-3); }
 .spacer { flex: 1 1 auto; }
