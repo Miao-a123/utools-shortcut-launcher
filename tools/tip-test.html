@@ -55,7 +55,11 @@
     }
     function leave (node) { node.dispatchEvent(new W.MouseEvent('mouseleave')) }
     function one (sel) { return D.querySelector(sel) }
+    // 大文件夹内部已经不渲染 .label 了，取名字优先读 store
     function nameOf (node) {
+      var id = node && node.dataset ? node.dataset.id : null
+      var sc = id ? KL.store.getShortcut(id) : null
+      if (sc) return sc.name
       var l = node.querySelector('.label')
       return (l ? l.textContent : node.textContent).trim()
     }
@@ -107,10 +111,12 @@
               ok('shows-for-mini-folder', isShown() && tipText() === nameOf(mini), JSON.stringify(tipText()))
               leave(mini)
 
-              // ⑥ 大文件夹自己有名条 → 不弹
+              // ⑥ 大文件夹在无字模式下只剩右上角一个数量角标、名字无处可看 → 要弹
+              //   （有字模式下标题栏可见，那时不弹，见 ⑬2）
               hover(big, 300, 300)
               return sleep(WAIT).then(function () {
-                ok('no-tip-for-big-folder-title', !isShown())
+                ok('shows-for-big-folder-in-hide-labels', isShown() && tipText() === nameOf(big),
+                  JSON.stringify(tipText()) + ' vs ' + JSON.stringify(nameOf(big)))
                 leave(big)
 
                 // ⑦ 大文件夹内部的图标标题被隐藏 → 要弹
@@ -160,24 +166,43 @@
                                   ok('no-tip-when-labels-visible', !isShown())
                                   leave(t2)
 
-                                  // ⑬ 长名称不溢出
-                                  KL.store.setSetting('showLabels', false)
-                                  return sleep(150).then(function () {
-                                    var t3 = one('.grid > .tile:not(.folder)')
-                                    hover(t3, 400, 300)
+                                  // ⑬ 大文件夹内部的图标一律不显示名称，所以即使
+                                  //    "显示名称"是开着的，也必须照样弹气泡
+                                  var inner2 = one('.grid > .tile.folder-big .inner-tile')
+                                  hover(inner2, 260, 260)
+                                  return sleep(WAIT).then(function () {
+                                    ok('inner-tile-tips-even-with-labels-on',
+                                      isShown() && tipText() === nameOf(inner2),
+                                      JSON.stringify(tipText()) + ' vs ' + JSON.stringify(nameOf(inner2)))
+                                    leave(inner2)
+
+                                    // ⑬2 有字模式下大文件夹自己的标题栏看得见 → 不弹
+                                    var big2 = one('.grid > .tile.folder-big')
+                                    hover(big2, 300, 300)
                                     return sleep(WAIT).then(function () {
-                                      var te = tipEl()
-                                      var cs = W.getComputedStyle(te)
-                                      ok('long-name-not-overflowing',
-                                        te.scrollWidth <= te.clientWidth + 1 && te.scrollHeight <= te.clientHeight + 1,
-                                        'sw=' + te.scrollWidth + ' cw=' + te.clientWidth)
-                                      ok('max-width-bounded',
-                                        parseFloat(cs.maxWidth) > 0 && te.getBoundingClientRect().width <= 341,
-                                        cs.maxWidth + ' / w=' + Math.round(te.getBoundingClientRect().width))
-                                      ok('one-tip-element-only', D.querySelectorAll('body > .tip').length === 1,
-                                        D.querySelectorAll('body > .tip').length)
-                                      leave(t3)
-                                      finish(out)
+                                      ok('no-tip-for-big-folder-with-labels-on', !isShown())
+                                      leave(big2)
+
+                                      // ⑭ 长名称不溢出
+                                      KL.store.setSetting('showLabels', false)
+                                      return sleep(150).then(function () {
+                                        var t3 = one('.grid > .tile:not(.folder)')
+                                        hover(t3, 400, 300)
+                                        return sleep(WAIT).then(function () {
+                                          var te = tipEl()
+                                          var cs = W.getComputedStyle(te)
+                                          ok('long-name-not-overflowing',
+                                            te.scrollWidth <= te.clientWidth + 1 && te.scrollHeight <= te.clientHeight + 1,
+                                            'sw=' + te.scrollWidth + ' cw=' + te.clientWidth)
+                                          ok('max-width-bounded',
+                                            parseFloat(cs.maxWidth) > 0 && te.getBoundingClientRect().width <= 341,
+                                            cs.maxWidth + ' / w=' + Math.round(te.getBoundingClientRect().width))
+                                          ok('one-tip-element-only', D.querySelectorAll('body > .tip').length === 1,
+                                            D.querySelectorAll('body > .tip').length)
+                                          leave(t3)
+                                          finish(out)
+                                        })
+                                      })
                                     })
                                   })
                                 })

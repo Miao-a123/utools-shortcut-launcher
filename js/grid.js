@@ -23,17 +23,20 @@
 
   function clamp (v, a, b) { return Math.max(a, Math.min(b, v)) }
 
-  /* 无字模式（隐藏标题）下，光标悬浮在图标上时在光标处弹出名称气泡。
+  /* 光标悬浮时在光标处弹出名称气泡（无字模式，以及大文件夹内部）。
      标题还显示着的时候不弹，免得两处重复显示同一个名字。
+     always=true 用于"名称一定不显示"的场合（大文件夹内部的图标），
+     这时不再看"显示/隐藏名称"开关。
      注意 mouseenter / mouseleave 不冒泡：大文件夹内部的图标不会触发
      外层文件夹的悬浮逻辑，反之亦然。 */
-  function attachNameTip (node, name) {
+  function attachNameTip (node, name, always) {
+    const need = () => always || !store.settings.showLabels
     node.addEventListener('mouseenter', e => {
-      if (store.settings.showLabels || e.buttons) return
+      if (!need() || e.buttons) return
       KL.ui.tip.hover(name, e.clientX, e.clientY)
     })
     node.addEventListener('mousemove', e => {
-      if (store.settings.showLabels) return
+      if (!need()) return
       // 按着鼠标不放（橡皮筋框选 / 拖大小 / 拖拽排序）时一律不弹，
       // 否则从图标上划拉过去会满屏气泡。用 e.buttons 而不是自己记状态：
       // 鼠标在窗口外松开时收不到 mouseup，状态会卡死。
@@ -405,30 +408,129 @@
     return FOLDER_SCALES[store.settings.folderIconSize] || FOLDER_SCALES.medium
   }
 
-  // 大文件夹内部的单元尺寸：只由"文件夹内图标大小"决定，
-  // 与文件夹本身尺寸无关 —— 这样不同尺寸的文件夹内图标大小一致。
-  // 列数按文件夹可用宽度自动排布，放不下的内容可滚动浏览。
+  function openFolderView (id) {
+    if (KL.dialogs && KL.dialogs.folderView) KL.dialogs.folderView(id)
+  }
+
+  // 大文件夹内部的单元尺寸：图标档位给出图标尺寸上限，列数按文件夹可用宽度
+  // 自适应——先按档位尺寸试排，右侧剩下的空白超过能多塞一列时自动缩一点图标
+  // 把列数加满（下限 80% 档位值，避免为了填满把图标缩得认不出）。
+  // 放不下的内容不再滚动，由分页逻辑（folderPage / renderFolderPage）翻页浏览。
+  //
+  // 大文件夹内部**一律不显示图标名称**：名称改由光标气泡给出（见 attachNameTip）。
+  // 一是名称行本来就占掉了近 1/4 的高度，二是右下角的分页器会盖在名称上
+  // （"页数显示妨碍图标显示"就是这么来的），去掉名称行之后两件事一起解决。
+  const INNER_CHROME = 8      // inner-tile 上下 padding 2px×2 + 边框 1px×2 + 行内 gap 2px
+
   function innerMetrics (folderSc) {
     const cell = currentCell()
     const box = tilePixelBox(folderSc)
     const scale = folderScale()
-    const unit = Math.max(26, Math.round(cell * scale))
     const gap = Math.max(3, Math.round(4 * scale))
     const pad = 6
-    const headH = 20
+    // 无字模式：标题栏整个不渲染（见 buildFolderTile）
+    const headH = store.settings.showLabels ? 20 : 0
     const innerW = Math.max(40, box.w - pad * 2)
-    const innerH = Math.max(unit, box.h - pad * 2 - headH)
-    const cols = Math.max(1, Math.floor((innerW + gap) / (unit + gap)))
-    const labelH = store.settings.showLabels ? Math.round(unit * 0.34) : 0
-    return { cols: cols, unit: unit, gap: gap, pad: pad, labelH: labelH, innerW: innerW, innerH: innerH }
+    const innerH = Math.max(30, box.h - pad * 2 - headH)
+    const iconMax = Math.max(26, Math.round(cell * scale))
+    // 横向自适应：在「图标 ≥ 80% 档位值」的候选列数里，选占宽最大的那个
+    const iconMin = Math.max(20, Math.round(iconMax * 0.8))
+    let cols = 1
+    let icon = Math.max(20, Math.min(iconMax, innerW - INNER_CHROME))
+    let bestUsed = -1
+    for (let c = 1; c <= 16; c++) {
+      const w = Math.floor((innerW - (c - 1) * gap) / c) - INNER_CHROME
+      if (w < 20) break
+      const ic = Math.min(iconMax, w)
+      const used = c * (ic + INNER_CHROME) + (c - 1) * gap
+      if (ic >= iconMin && used > bestUsed) { bestUsed = used; cols = c; icon = ic }
+    }
+    const rowH = icon + INNER_CHROME
+    const rows = Math.max(1, Math.floor((innerH + gap) / (rowH + gap)))
+    return {
+      cols: cols, icon: icon, unit: icon + INNER_CHROME, rowH: rowH, rows: rows,
+      gap: gap, pad: pad, labelH: 0, headH: headH,
+      innerW: innerW, innerH: innerH
+    }
   }
 
   function innerIconSize (sc, m) {
-    const w = m.unit * (sc.col || 1) + m.gap * ((sc.col || 1) - 1)
-    const h = m.unit * (sc.row || 1) + m.gap * ((sc.row || 1) - 1)
-    const base = Math.min(w, h) - 8
-    if (!store.settings.showLabels) return clamp(Math.round(base - 4), 16, 220)
-    return clamp(Math.round(base - m.labelH), 16, 220)
+    const c = sc.col || 1
+    const r = sc.row || 1
+    const w = m.unit * c + m.gap * (c - 1) - INNER_CHROME
+    const h = m.rowH * r + m.gap * (r - 1) - INNER_CHROME - m.labelH
+    return clamp(Math.round(Math.min(w, h)), 16, 220)
+  }
+
+  /* ---------------- 大文件夹分页 ----------------
+     之前内部是 overflow-y:auto 的连续滚动：图标行滚到一半会被裁掉半截，
+     名称也跟着被切。改成整页翻动——每页 rows 行 × cols 列完整展示。 */
+  const folderPage = {}    // folderId → 当前页码（0 起）
+
+  function folderPageCount (m, total) {
+    return Math.max(1, Math.ceil(total / (m.cols * m.rows)))
+  }
+
+  function renderFolderPage (sc, inner, m, kids) {
+    const pages = folderPageCount(m, kids.length)
+    let page = folderPage[sc.id] || 0
+    if (page >= pages) page = pages - 1
+    if (page < 0) page = 0
+    folderPage[sc.id] = page
+    inner.innerHTML = ''
+    const show = kids.slice(page * m.cols * m.rows, (page + 1) * m.cols * m.rows)
+    for (const k of show) {
+      const node = buildInnerTile(k, m, sc)
+      inner.appendChild(node)
+      tileNodes[k.id] = node
+    }
+    return pages
+  }
+
+  // 翻页后只重绘这个文件夹的内部，不整屏 render（页码状态在 folderPage 里，不会丢）
+  function refreshFolderInner (sc) {
+    const tile = tileNodes[sc.id]
+    if (!tile) return
+    const inner = tile.querySelector('.folder-inner')
+    if (!inner) return
+    const m = innerMetrics(sc)
+    const pages = renderFolderPage(sc, inner, m, store.childrenOf(sc.id))
+    const pager = tile.querySelector('.folder-pager')
+    if (pager && pager._update) pager._update(pages)
+  }
+
+  const PG_PREV_SVG = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>'
+  const PG_NEXT_SVG = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>'
+
+  function buildFolderPager (sc, pages) {
+    const pager = el('div', 'folder-pager')
+    const prev = el('button', 'pg-btn', PG_PREV_SVG)
+    const next = el('button', 'pg-btn', PG_NEXT_SVG)
+    const num = el('span', 'pg-num', '')
+    prev.title = '上一页'
+    next.title = '下一页'
+    pager.appendChild(prev)
+    pager.appendChild(num)
+    pager.appendChild(next)
+    const update = () => {
+      const p = folderPage[sc.id] || 0
+      num.textContent = (p + 1) + '/' + pages
+      prev.disabled = p <= 0
+      next.disabled = p >= pages - 1
+    }
+    prev.addEventListener('click', e => {
+      e.stopPropagation()
+      const p = folderPage[sc.id] || 0
+      if (p > 0) { folderPage[sc.id] = p - 1; refreshFolderInner(sc) }
+    })
+    next.addEventListener('click', e => {
+      e.stopPropagation()
+      const p = folderPage[sc.id] || 0
+      if (p < pages - 1) { folderPage[sc.id] = p + 1; refreshFolderInner(sc) }
+    })
+    update()
+    pager._update = update
+    return pager
   }
 
   function buildFolderTile (sc) {
@@ -455,35 +557,52 @@
       if (count) tile.appendChild(el('div', 'folder-badge', String(count)))
       attachNameTip(tile, sc.name)      // 小文件夹的标题同样会被无字模式隐藏
     } else {
-      // 大文件夹（m×n）：内部平铺，可直接点图标
+      // 大文件夹（m×n）：内部整页平铺，可直接点图标；放不下的翻页查看
       tile.classList.add('folder-big')
       tile.style.gridColumn = 'span ' + sc.col
       tile.style.gridRow = 'span ' + sc.row
-      const head = el('div', 'folder-head')
-      head.title = '点击查看全部图标'
-      const nameEl = el('span', 'folder-name')
-      nameEl.textContent = sc.name
-      head.appendChild(nameEl)
-      head.appendChild(el('span', 'folder-count', String(count)))
-      head.addEventListener('click', e => {
-        e.stopPropagation()
-        if (KL.dialogs && KL.dialogs.folderView) KL.dialogs.folderView(sc.id)
-      })
-      tile.appendChild(head)
+      if (store.settings.showLabels) {
+        const head = el('div', 'folder-head')
+        head.title = '点击查看全部图标'
+        const nameEl = el('span', 'folder-name')
+        nameEl.textContent = sc.name
+        head.appendChild(nameEl)
+        head.appendChild(el('span', 'folder-count', String(count)))
+        head.addEventListener('click', e => {
+          e.stopPropagation()
+          openFolderView(sc.id)
+        })
+        tile.appendChild(head)
+      } else {
+        // 无字模式：标题栏整个不渲染，数量缩成右上角小角标（点它仍能打开完整视图）
+        const badge = el('div', 'folder-badge', String(count))
+        badge.title = sc.name + '（点击查看全部图标）'
+        badge.addEventListener('click', e => {
+          e.stopPropagation()
+          openFolderView(sc.id)
+        })
+        tile.appendChild(badge)
+      }
       if (sc.color) tile.style.background = sc.color
       const m = innerMetrics(sc)
       const inner = el('div', 'folder-inner')
       inner.style.gridTemplateColumns = 'repeat(' + m.cols + ', ' + m.unit + 'px)'
-      inner.style.gridAutoRows = m.unit + 'px'
+      inner.style.gridAutoRows = m.rowH + 'px'
       inner.style.gap = m.gap + 'px'
-      inner.style.maxHeight = m.innerH + 'px'
       const kids = store.childrenOf(sc.id)
-      for (const k of kids) {
-        const node = buildInnerTile(k, m, sc)
-        inner.appendChild(node)
-        tileNodes[k.id] = node
-      }
+      const pages = renderFolderPage(sc, inner, m, kids)
       tile.appendChild(inner)
+      // 滚轮翻页（替换原来的连续滚动），滚到头再把事件放行给外层页面滚动
+      inner.addEventListener('wheel', e => {
+        if (pages <= 1) return
+        e.preventDefault()
+        e.stopPropagation()
+        const p = folderPage[sc.id] || 0
+        if (e.deltaY > 0 && p < pages - 1) { folderPage[sc.id] = p + 1; refreshFolderInner(sc) }
+        else if (e.deltaY < 0 && p > 0) { folderPage[sc.id] = p - 1; refreshFolderInner(sc) }
+      }, { passive: false })
+      if (pages > 1) tile.appendChild(buildFolderPager(sc, pages))
+      attachNameTip(tile, sc.name)   // 无字模式下悬浮文件夹空白处也能看到名称气泡
     }
 
     if (selected.has(sc.id)) tile.classList.add('selected')
@@ -496,8 +615,15 @@
       }
       e.stopPropagation()
       if (sc.col * sc.row <= 1) {
-        if (KL.dialogs && KL.dialogs.folderView) KL.dialogs.folderView(sc.id)
+        // 小文件夹：整个图标都是"打开"
+        openFolderView(sc.id)
+        return
       }
+      // 大文件夹：内部的图标、标题栏、数量角标、分页按钮、右下角的拉伸手柄
+      // 各自都 stopPropagation 了，能走到这里的就是"空白处" —— 一律当作打开文件夹。
+      const t = e.target
+      if (t && t.closest && (t.closest('.resize') || t.closest('.folder-pager'))) return
+      openFolderView(sc.id)
     })
     tile.addEventListener('contextmenu', e => {
       e.preventDefault()
@@ -571,12 +697,10 @@
     img.alt = ''
     box.appendChild(img)
     tile.appendChild(box)
-    const label = el('div', 'label')
-    label.textContent = sc.name
-    label.title = sc.name
-    tile.appendChild(label)
+    // 大文件夹内部不渲染名称（见 innerMetrics 上的说明）——名称只靠光标气泡，
+    // 所以这里第三个参数传 true，不受"显示/隐藏名称"开关影响。
     if (sc.missing) tile.appendChild(el('div', 'badge'))
-    attachNameTip(tile, sc.name)
+    attachNameTip(tile, sc.name, true)
 
     tile.addEventListener('click', e => {
       e.stopPropagation()

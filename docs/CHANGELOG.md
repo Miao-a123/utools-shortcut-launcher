@@ -8,6 +8,50 @@
 
 ---
 
+## v1.8.0 — 大文件夹：整页翻页 + 不再显示名称 + 点空白处打开（2026-10-16）
+
+### 1. 大文件夹内容改为整页翻动
+
+之前大文件夹内部是 `overflow-y: auto` 的**连续滚动**：图标行滚到一半会被裁掉半截，名称也跟着被切。改成整页翻动 —— 每页完整展示 `rows` 行 × `cols` 列，放不下的翻页看。
+
+- `js/grid.js`：`innerMetrics()` 重写 —— 列数按文件夹可用宽度自适应（在「图标 ≥ 80% 档位值」的候选列数里选占宽最大的那个，避免为了填满把图标缩得认不出），并算出 `rowH` / `rows`。
+- 新增 `folderPage`（folderId → 页码）、`renderFolderPage()`（只渲染当前页）、`refreshFolderInner()`（翻页只重绘这个文件夹的内部，不整屏 render，页码状态不丢）、`buildFolderPager()`。
+- 翻页入口有两个：鼠标**滚轮**（`passive:false` + `preventDefault`，滚到头不消费事件、放行给外层页面滚动）和右下角的 `‹ 1/2 ›` 分页器。
+- `css/style.css`：新增 `.folder-pager` / `.pg-btn` / `.pg-num`，`.folder-inner` 的 `overflow` 从滚动改为 `hidden`。
+
+### 2. 大文件夹内部不再显示图标名称
+
+**问题**：名称行要占掉近四分之一的高度，而且右下角的分页器正好盖在名称上（"页数显示妨碍图标显示了"）。
+
+**修复**：
+- `buildInnerTile()` 不再渲染 `.label`（名称只由光标气泡给出），`css` 里 `.inner-tile .label` 与 `.grid.hide-labels .inner-tile .label` 两条规则一并删掉。
+- `innerMetrics()` 的 `rowH` 不再加 `LABEL_H`（`LABEL_H` 常量随之删除），`rowH === unit`；行高省下的 22px 正好是分页器的高度 —— 所以**分页器不再压住图标，且每页容量没有减少**（实测每页仍是 8 个，`分页器不压住任何图标[最大重叠=0px²]`）。
+- `attachNameTip()` 增加第三个参数 `always`：内部图标传 `true`，**不再看"显示/隐藏名称"开关**，因为它们的名称本来就不显示。
+- 顺带修正 `tip-test` 里一条过时断言：`no-tip-for-big-folder-title`（前提是"大文件夹自己有名条"）在无字模式下不成立 —— 无字模式的大文件夹只剩一个数量角标、名字无处可看，**这时悬浮应当弹气泡**。改成按模式分别断言：
+  - 无字模式 → `shows-for-big-folder-in-hide-labels`（要弹）
+  - 有字模式 → `no-tip-for-big-folder-with-labels-on`（不弹，标题栏看得见）
+
+### 3. 点大文件夹任意空白处即可打开
+
+之前只有顶部标题栏 / 数量角标能点开。现在内部图标、标题栏、角标、分页按钮、右下角拉伸手柄都各自 `stopPropagation` 了，所以**能冒泡到文件夹本身的点击就是空白处** —— 一律打开弹层（`.resize` 与 `.folder-pager` 额外做了一次兜底判断）。
+
+抽出 `openFolderView(id)` 统一收口（原来三处各自写 `KL.dialogs && KL.dialogs.folderView && ...`）。
+
+### 验证
+
+- `tools/folder-test.html` 补齐到 **27 项（有字模式）/ 29 项（无字模式）全 PASS**，新增的关键断言：
+  - `内部图标不渲染名称元素` / `内部图标节点无文本` / `行高不再为名称留位置[rowH=68 unit=68]`
+  - `分页器不压住任何图标[最大重叠=0px²]` —— 逐个比 `.icon-box` 与分页器的像素矩形，直接把这个 bug 编码成回归点
+  - `点文件夹空白处打开视图` / `点内部空隙也打开视图` / `点分页器不打开文件夹` / `点内部图标不打开文件夹`（用 `KL.ui.modalCount` 判断 —— 关闭有 120ms 退场动画，`.fv-grid` 不能作为"是否打开"的依据）
+- `tools/tip-test.html` 扩到 **22 项全 PASS**（含 `inner-tile-tips-even-with-labels-on` 与上面两条按模式区分的断言）。
+- `uitest`（16）、`dedup-test`（16）、`layout-test`（35）全 PASS；`offline-test.js`（12）全 PASS；`release.js` 与 `smoke.js` 通过。
+
+### 备注
+
+这一版包含之前**尚未提交**的大文件夹分页改造（`js/grid.js` / `css/style.css` / `tools/folder-test.html` / `plugin.json` 的版本号），本次一并整理进库。
+
+---
+
 ## v1.7.0 — 批量摆放 + 联网开关 + 日志噪音（2026-10-12）
 
 ### 1. 新增：批量摆放（多选整组平移）

@@ -335,14 +335,35 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
 .tile .folder-inner {
   display: grid; justify-content: start; align-content: start;
   flex: 1 1 auto; min-height: 0;
-  overflow-y: auto; overflow-x: hidden;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  padding-right: 2px;
+  /* 连续滚动已改为整页翻动（folder-pager / 滚轮），不再出现图标被裁半截 */
+  overflow: hidden;
 }
-.tile .folder-inner::-webkit-scrollbar { width: 6px; }
-.tile .folder-inner::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
-.tile .folder-inner::-webkit-scrollbar-track { background: transparent; }
+/* 大文件夹分页器：右下角悬浮，只有一页时不渲染 */
+.tile .folder-pager {
+  position: absolute; right: 5px; bottom: 5px; z-index: 3;
+  display: flex; align-items: center; gap: 2px;
+  background: var(--tile-bg, rgba(127,127,127,.12));
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--border, rgba(127,127,127,.3));
+  border-radius: 9px; padding: 1px 3px;
+}
+.tile .folder-pager .pg-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0;
+  border: none; border-radius: 6px; background: transparent;
+  color: var(--text-2); cursor: pointer;
+}
+.tile .folder-pager .pg-btn:hover { background: var(--hover); color: var(--text); }
+.tile .folder-pager .pg-btn:disabled { opacity: .3; cursor: default; background: transparent; }
+.tile .folder-pager .pg-num {
+  font-size: 9.5px; line-height: 1; color: var(--text-3);
+  min-width: 22px; text-align: center; user-select: none;
+}
+/* 无字模式下大文件夹的标题栏整个隐藏（JS 已不渲染，这里兜底） */
+.grid.hide-labels .tile .folder-head { display: none; }
+/* 无字模式下右上角的数量角标可点击打开完整视图 */
+.tile .folder-badge { cursor: pointer; }
+.tile .folder-badge:hover { filter: brightness(1.12); }
 
 .inner-tile {
   position: relative;
@@ -366,13 +387,8 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
 }
 .inner-tile img.icon { width: 100%; height: 100%; object-fit: contain; -webkit-user-drag: none; }
-.inner-tile .label {
-  font-size: 9.5px; line-height: 1.15; text-align: center;
-  min-height: 2.3em; overflow: hidden; color: var(--text-2);
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  word-break: break-all;
-}
-.grid.hide-labels .inner-tile .label { display: none; }
+/* 大文件夹内部一律不显示图标名称（JS 已不再渲染 .label），
+   名称改由光标气泡给出 —— 见 grid.js 的 attachNameTip / innerMetrics */
 .inner-tile .resize {
   position: absolute; right: 1px; bottom: 1px; width: 10px; height: 10px;
   opacity: 0; cursor: nwse-resize; color: var(--text-3);

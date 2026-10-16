@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>folder-test</title>
+  <style>
+    body { margin: 0; font: 12px/1.6 monospace; background: #fff; color: #111 }
+    #frame { width: 900px; height: 640px; border: 1px solid #ccc; display: block }
+    #log { padding: 8px 10px; white-space: pre-wrap }
+  </style>
+</head>
+<body>
+  <p style="font-size:12px;margin:6px 10px">大文件夹分页 / 无字模式 回归测试 ——
+    无头运行：<code>chrome --headless=new --allow-file-access-from-files --virtual-time-budget=6000 --dump-dom "tools/folder-test.html?labels=1"</code>，结果写在 &lt;title&gt;。</p>
+  <iframe id="frame"></iframe>
+  <div id="log"></div>
+  <script>
+  var Q = new URLSearchParams(location.search)
+  var frame = document.getElementById('frame')
+  frame.src = '../index.html?theme=dark&labels=' + (Q.get('labels') || '1')
+  frame.addEventListener('load', function () { setTimeout(run, 900) })
+
+  function run () {
+    var out = []
+    function ok (n, c, x) { out.push((c ? 'PASS' : 'FAIL') + ':' + n + (x !== undefined ? '[' + x + ']' : '')) }
+    try {
+      var W = frame.contentWindow, D = frame.contentDocument, KL = W.KL
+      if (!KL || !KL.grid || !KL.store) { out.push('ERROR:KL 未加载'); return finish(out) }
+      var labels = Q.get('labels') !== '0'
+
+      var folder = null
+      KL.store.shortcuts.forEach(function (s) {
+        if (!folder && s.kind === 'folder' && s.col * s.row > 1) folder = s
+      })
+      if (!folder) { out.push('ERROR:mock 里没有大文件夹'); return finish(out) }
+
+      var tile = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
+      ok('大文件夹渲染', !!tile)
+      if (!tile) return finish(out)
+
+      var inner = tile.querySelector('.folder-inner')
+      ok('folder-inner 存在', !!inner)
+      if (!inner) return finish(out)
+
+      var mCols = 0, mUnit = 0
+      var m1 = inner.style.gridTemplateColumns.match(/repeat\((\d+),\s*(\d+)px\)/)
+      if (m1) { mCols = parseInt(m1[1], 10); mUnit = parseInt(m1[2], 10) }
+      ok('显式列数 ≥1', mCols >= 1, inner.style.gridTemplateColumns)
+      var rowH = parseInt(inner.style.gridAutoRows, 10)
+      ok('行高为显式像素', rowH > 0, inner.style.gridAutoRows)
+
+      var firstTile = inner.querySelector('.inner-tile')
+      var iconSize = firstTile ? parseInt(firstTile.style.getPropertyValue('--icon-size'), 10) : 0
+      ok('图标尺寸合法(0<icon≤unit)', iconSize > 0 && iconSize <= mUnit, iconSize + '/' + mUnit)
+
+      var overflowY = W.getComputedStyle(inner).overflowY
+      ok('内部不再滚动(分页)', overflowY === 'hidden', overflowY)
+
+      if (labels) {
+        ok('有字模式显示文件夹标题', !!tile.querySelector('.folder-head .folder-name'))
+        ok('有字模式无右上角角标', !tile.querySelector('.folder-badge'))
+      } else {
+        ok('无字模式隐藏标题栏', !tile.querySelector('.folder-head'))
+        var badge = tile.querySelector('.folder-badge')
+        ok('无字模式数量角标存在', !!badge, badge && badge.textContent)
+        if (badge) {
+          badge.click()
+          ok('点角标打开完整视图', !!D.querySelector('.fv-grid'))
+          closeModal()
+        }
+      }
+
+      /* ---- 内部图标一律不显示名称（两种模式都是） ---- */
+      ok('内部图标不渲染名称元素', !inner.querySelector('.inner-tile .label'))
+      ok('内部图标节点无文本', firstTile ? firstTile.textContent.trim() === '' : false,
+        JSON.stringify(firstTile ? firstTile.textContent : null))
+      // 行高以前是 unit + 22（名称行），现在不再为名称留位置
+      ok('行高不再为名称留位置', rowH === mUnit, 'rowH=' + rowH + ' unit=' + mUnit)
+
+      /* ---- 分页：塞 40 个子项撑出多页 ---- */
+      var kid0 = KL.store.childrenOf(folder.id)[0]
+      for (var i = 0; i < 40; i++) {
+        KL.store.shortcuts.push(Object.assign({}, kid0, { id: 'tk' + (Date.now()) + '_' + i, name: '测试项 ' + i }))
+      }
+      KL.grid.render()
+      tile = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
+      inner = tile.querySelector('.folder-inner')
+      var pager = tile.querySelector('.folder-pager')
+      ok('多页时出现分页器', !!pager)
+      if (pager) {
+        var num = pager.querySelector('.pg-num')
+        var btns = pager.querySelectorAll('.pg-btn')
+        var prev = btns[0], next = btns[1]
+        ok('页码 1/N', /^1\/\d+$/.test(num.textContent), num.textContent)
+        ok('第一页 prev 禁用', prev.disabled)
+        var perPage = inner.querySelectorAll('.inner-tile').length
+        ok('每页图标数 ≤ cols×rows', perPage > 0, perPage)
+
+        /* 分页器是 absolute 悬浮的，绝不能压住任何图标 —— 这就是
+           "页数显示妨碍图标显示" 的回归点，所以按像素矩形逐个比。 */
+        var pr = pager.getBoundingClientRect()
+        var worst = 0, worstId = ''
+        Array.prototype.forEach.call(inner.querySelectorAll('.inner-tile'), function (t2) {
+          var ib = t2.querySelector('.icon-box') || t2
+          var r = ib.getBoundingClientRect()
+          var ox = Math.min(r.right, pr.right) - Math.max(r.left, pr.left)
+          var oy = Math.min(r.bottom, pr.bottom) - Math.max(r.top, pr.top)
+          var area = (ox > 0 && oy > 0) ? ox * oy : 0
+          if (area > worst) { worst = area; worstId = t2.dataset.id }
+        })
+        ok('分页器不压住任何图标', worst === 0,
+          '最大重叠=' + Math.round(worst) + 'px²' + (worstId ? ' @' + worstId : ''))
+
+        var firstId0 = inner.querySelector('.inner-tile').dataset.id
+        next.click()
+        var firstId1 = inner.querySelector('.inner-tile').dataset.id
+        ok('翻页后内容变化', firstId0 !== firstId1, firstId0 + '->' + firstId1)
+        ok('页码变为 2/N', /^2\/\d+$/.test(num.textContent), num.textContent)
+        ok('第二页 prev 可用', !prev.disabled)
+
+        // 滚轮向下 → 翻页且事件被消费（不冒泡给外层）
+        var ev = new W.WheelEvent('wheel', { deltaY: 120, cancelable: true })
+        inner.dispatchEvent(ev)
+        ok('滚轮向下翻页', /^3\/\d+$/.test(num.textContent), num.textContent + ' defaultPrevented=' + ev.defaultPrevented)
+
+        // 连续翻到最后一页
+        var guard = 0
+        while (!next.disabled && guard++ < 30) next.click()
+        ok('最后一页 next 禁用', next.disabled, num.textContent)
+        var total = parseInt(num.textContent.split('/')[1], 10)
+        var lastId = inner.querySelector('.inner-tile').dataset.id
+        prev.click()
+        ok('向前翻页内容变化', inner.querySelector('.inner-tile').dataset.id !== lastId)
+        ok('页码回退到倒数第二页', num.textContent === (total - 1) + '/' + total, num.textContent)
+
+        // 无字模式下翻页后角标 / 标题状态不回弹
+        if (!labels) ok('无字模式翻页后仍无标题栏', !tile.querySelector('.folder-head'))
+      }
+
+      /* ---- 点击大文件夹"任意空白处" = 打开文件夹 ----
+         用 modalCount 判断（同步增减），别用 .fv-grid 是否存在 ——
+         关闭时有 120ms 的退场动画，DOM 还在。 */
+      function closeModal () {
+        // 关闭有 120ms 退场动画，DOM 里可能同时挂着上一个已关闭的弹窗 ——
+        // 必须点最后一个（最新打开的那个），否则点到已经 closed 的按钮上是空操作
+        var btns = D.querySelectorAll('.modal-head button[title="关闭"]')
+        if (btns.length) btns[btns.length - 1].click()
+      }
+      var base = KL.ui.modalCount
+
+      // ① 事件目标是文件夹本体（外圈留白）
+      tile.dispatchEvent(new W.MouseEvent('click', { bubbles: true }))
+      ok('点文件夹空白处打开视图',
+        KL.ui.modalCount === base + 1 && !!D.querySelector('.fv-grid'),
+        'modal ' + base + '→' + KL.ui.modalCount)
+      closeModal()
+
+      // ② 事件目标是内部网格容器（图标之间的空隙）
+      inner.dispatchEvent(new W.MouseEvent('click', { bubbles: true }))
+      ok('点内部空隙也打开视图', KL.ui.modalCount === base + 1, 'modal=' + KL.ui.modalCount)
+      closeModal()
+
+      // ③ 点分页器本身不打开
+      var pg = tile.querySelector('.folder-pager')
+      if (pg) {
+        pg.dispatchEvent(new W.MouseEvent('click', { bubbles: true }))
+        ok('点分页器不打开文件夹', KL.ui.modalCount === base, 'modal=' + KL.ui.modalCount)
+      } else {
+        ok('点分页器不打开文件夹', true, '无分页器，跳过')
+      }
+
+      // ④ 点内部图标 = 启动该项，不是打开文件夹（放最后：启动会触发重渲染）
+      var it = null
+      Array.prototype.forEach.call(inner.querySelectorAll('.inner-tile'), function (t2) {
+        var s2 = KL.store.getShortcut(t2.dataset.id)
+        if (!it && s2 && s2.launch && s2.launch.kind !== 'url') it = t2
+      })
+      if (it) {
+        try { it.dispatchEvent(new W.MouseEvent('click', { bubbles: true })) } catch (e2) {}
+        ok('点内部图标不打开文件夹', KL.ui.modalCount === base, 'modal=' + KL.ui.modalCount)
+      }
+    } catch (e) {
+      out.push('ERROR:' + (e && e.message))
+    }
+    finish(out)
+  }
+
+  function finish (out) {
+    var txt = out.join('  ')
+    document.getElementById('log').textContent = txt
+    document.title = txt
+  }
+  </script>
+</body>
+</html>

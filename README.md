@@ -18,9 +18,9 @@
 - **一键扫描本机应用**：四个来源勾选扫描 —— 开始菜单快捷方式、系统应用列表（含 UWP，从 AppxManifest 取真实 logo）、桌面快捷方式、已安装程序注册表（App Paths 与 Uninstall 键），带搜索、图标预览、多选批量导入。
 - **导入浏览器收藏夹**：支持 Chrome / Edge / Brave / Vivaldi / Chromium / 360 极速 / QQ 浏览器，自动探测多 Profile，文件夹树形三态勾选，导入后后台并发拉取图标。
 - **批量操作**：橡皮筋框选（`Ctrl` 追加）/ `Ctrl+A` 多选后统一移动分类、装进文件夹、改尺寸、刷新图标、删除。
-- **文件夹 / 大文件夹**：同一个容器的两种形态 —— 1×1 是小文件夹（点开弹层操作），调大成 m×n 就变成大文件夹（内部图标平铺、可直接点击）。文件夹可重命名、设背景色；图标可拖入 / 拖出；大文件夹内支持**滚轮滚动**浏览，点标题栏可打开弹层看全。
+- **文件夹 / 大文件夹**：同一个容器的两种形态 —— 1×1 是小文件夹（点开弹层操作），调大成 m×n 就变成大文件夹（内部图标平铺、可直接点击）。文件夹可重命名、设背景色；图标可拖入 / 拖出；大文件夹内部**不显示图标名称**（名称靠鼠标悬浮气泡，见下），放不下时**整页翻动**（滚轮或右下角 `‹ 1/2 ›` 分页器），**点任意空白处即可打开弹层**看全。
 - **外观**：图标格子大小 / 圆角 / 侧边栏宽度 / 图标文字开关均可调；图标格子支持**背景色（含不透明度调节）**与**描边（颜色 + 粗细）**；文件夹内图标大小可选 小 / 中 / 大 / 与主格一致。
-- **无字模式的名称气泡**：隐藏图标文字后，光标停在图标上会在光标处弹出一个小气泡显示名称（跟着光标走，靠边自动翻向，按住鼠标拖拽/框选时不弹）。
+- **无字模式的名称气泡**：隐藏图标文字后，光标停在图标上会在光标处弹出一个小气泡显示名称（跟着光标走，靠边自动翻向，按住鼠标拖拽/框选时不弹）。大文件夹内部的图标**一律**不显示名称，所以那里的气泡不受"显示/隐藏名称"开关影响。
 - **其他**：全局搜索（`Ctrl+F`，打开插件后直接敲键盘即可搜索）、右键菜单、目标丢失检测（红点 + 一键清理）、数据导入/导出、深/浅色跟随 uTools 主题、单击/双击打开、启动参数与工作目录；设置面板从**左下角**弹出，不遮挡图标区。
 
 > 面向用户的完整说明见 **[docs/使用手册.md](docs/使用手册.md)**。
@@ -76,6 +76,7 @@ utools-shortcut-launcher/
 │   ├── dedup-test.html    # 去重回归测试（同一 exe 不同参数不能互相判重）
 │   ├── tip-test.html      # 名称气泡回归测试（无字模式下的悬浮提示）
 │   ├── layout-test.html   # 布局回归测试（自动对齐 / 自由摆放 / 批量摆放）
+│   ├── folder-test.html   # 大文件夹回归测试（分页 / 无名称 / 点空白处打开）
 │   ├── offline-test.js    # 联网开关自测（源码级验证 fetchFavicon 的离线闸门）
 │   ├── selftest.js        # 桥接层自测（图标/lnk/应用扫描）
 │   ├── smoke.js           # 渲染冒烟校验
@@ -161,11 +162,18 @@ chrome --headless=new --allow-file-access-from-files --virtual-time-budget=12000
 # 布局回归测试：切到自由摆放不跳、落格精确、留空不补、来回切位置不丢、批量摆放保留相对位置
 chrome --headless=new --allow-file-access-from-files --virtual-time-budget=12000 \
   --dump-dom "file:///<repo>/tools/layout-test.html"
+
+# 大文件夹回归测试：分页翻动、内部不显示名称、分页器不压图标、点空白处打开
+chrome --headless=new --allow-file-access-from-files --virtual-time-budget=9000 \
+  --dump-dom "file:///<repo>/tools/folder-test.html?labels=1"   # ?labels=0 跑无字模式
+
+# 联网开关自测（Node，不需要浏览器）
+node tools/offline-test.js
 ```
 
-`tools/uitest.html`、`tools/dedup-test.html`、`tools/tip-test.html`、`tools/layout-test.html`
-都直接 iframe 引入 `../index.html`，断言结果写在 `document.title` 里，用 `--dump-dom` 回读即可；
-不复制页面结构，所以页面改了测试不会悄悄失效。
+`tools/uitest.html`、`tools/dedup-test.html`、`tools/tip-test.html`、`tools/layout-test.html`、
+`tools/folder-test.html` 都直接 iframe 引入 `../index.html`，断言结果写在 `document.title` 里，
+用 `--dump-dom` 回读即可；不复制页面结构，所以页面改了测试不会悄悄失效。
 `dedup-test.html` 会临时替换 iframe 里的 `window.services.resolvePaths` 喂假数据，跑完在
 in-memory 的 mock 数据里留下几条测试条目 —— 用单独的 `--user-data-dir` 跑即可，别拿它去动真实数据。
 
