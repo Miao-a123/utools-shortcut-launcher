@@ -205,7 +205,14 @@
             Math.abs(innerH - (Math.round(rectOf(ft).h) - 12)) <= 2,
             innerH + ' vs ' + (Math.round(rectOf(ft).h) - 12))
 
-          /* ---- 拉长的格子（1×n / n×1）：图标贴上/左，名称进格子内部 ---- */
+          /* ---- 拉长的格子（1×n / n×1）----
+             图标贴上/左按 1×1 大小放；格子**里面**常驻一份名称（.tile-name-fill，
+             不受无字模式影响）；格子**下方**那份 .label 回到原来的逻辑。 */
+          function fillOf (t) { return t.querySelector('.tile-name-fill') }
+          function fillVisible (t) {
+            var f = fillOf(t)
+            return !!f && W.getComputedStyle(f).display !== 'none'
+          }
           var target = null
           tiles().forEach(function (t) {
             if (target) return
@@ -216,6 +223,10 @@
           })
           ok('找到可拉伸的 1×1 图标', !!target, String(target))
           var baseIcon = iconSizeOf(tileOf(target))
+          var targetName = KL.store.getShortcut(target).name
+
+          // 普通格子里不该有常驻名称
+          ok('普通 1×1 图标不显示格子内名称', !fillVisible(tileOf(target)))
 
           // ① 拉成 4×1（横条）
           KL.store.updateShortcut(target, { col: 4, row: 1 })
@@ -223,18 +234,24 @@
             var t4 = tileOf(target)
             var tr = rectOf(t4)
             var ir = rectOf(t4.querySelector('.icon-box'))
+            var fr = rectOf(fillOf(t4))
             var lr = rectOf(labelOf(t4))
             ok('4×1 打上 wide 标记',
               t4.classList.contains('wide') && !t4.classList.contains('tall'), t4.className)
             ok('4×1 图标贴左边', ir.left - tr.left <= 10, Math.round(ir.left - tr.left))
             ok('4×1 图标仍是 1×1 大小', Math.abs(iconSizeOf(t4) - baseIcon) <= 1,
               iconSizeOf(t4) + ' vs ' + baseIcon)
-            ok('4×1 名称在图标右侧', lr.left >= ir.right - 2,
-              Math.round(lr.left) + ' vs icon.right=' + Math.round(ir.right))
-            ok('4×1 名称在格子内部（没挂到格子下面）',
-              lr.top >= tr.top - 1 && lr.bottom <= tr.bottom + 1 && lr.top < tr.bottom,
-              'label ' + Math.round(lr.top) + '..' + Math.round(lr.bottom) +
+            ok('4×1 格子内显示常驻名称',
+              fillVisible(t4) && fillOf(t4).textContent === targetName,
+              fillOf(t4).textContent)
+            ok('4×1 格子内名称在图标右侧', fr.left >= ir.right - 2,
+              Math.round(fr.left) + ' vs icon.right=' + Math.round(ir.right))
+            ok('4×1 格子内名称在格子内部',
+              fr.top >= tr.top - 1 && fr.bottom <= tr.bottom + 1 && fr.top < tr.bottom,
+              'fill ' + Math.round(fr.top) + '..' + Math.round(fr.bottom) +
               ' tile ' + Math.round(tr.top) + '..' + Math.round(tr.bottom))
+            ok('4×1 底部名称回到格子下方（原有逻辑）', lr.top >= tr.bottom - 1,
+              Math.round(lr.top) + ' vs ' + Math.round(tr.bottom))
 
             // ② 拉成 1×4（竖条）
             KL.store.updateShortcut(target, { col: 1, row: 4 })
@@ -242,29 +259,51 @@
               var t1 = tileOf(target)
               var tr1 = rectOf(t1)
               var ir1 = rectOf(t1.querySelector('.icon-box'))
+              var fr1 = rectOf(fillOf(t1))
               var lr1 = rectOf(labelOf(t1))
               ok('1×4 打上 tall 标记',
                 t1.classList.contains('tall') && !t1.classList.contains('wide'), t1.className)
               ok('1×4 图标贴顶边', ir1.top - tr1.top <= 10, Math.round(ir1.top - tr1.top))
               ok('1×4 图标仍是 1×1 大小', Math.abs(iconSizeOf(t1) - baseIcon) <= 1,
                 iconSizeOf(t1) + ' vs ' + baseIcon)
-              ok('1×4 名称在图标下方', lr1.top >= ir1.bottom - 2,
-                Math.round(lr1.top) + ' vs icon.bottom=' + Math.round(ir1.bottom))
-              ok('1×4 名称在格子内部', lr1.bottom <= tr1.bottom + 1 && lr1.top < tr1.bottom,
-                'label.bottom=' + Math.round(lr1.bottom) + ' tile.bottom=' + Math.round(tr1.bottom))
-              ok('1×4 名称横向铺满格子', lr1.w >= tr1.w - 14,
-                Math.round(lr1.w) + ' vs ' + Math.round(tr1.w))
+              ok('1×4 格子内显示常驻名称',
+                fillVisible(t1) && fillOf(t1).textContent === targetName,
+                fillOf(t1).textContent ? fillOf(t1).textContent.slice(0, 12) : '无')
+              ok('1×4 格子内名称在图标下方', fr1.top >= ir1.bottom - 2,
+                Math.round(fr1.top) + ' vs icon.bottom=' + Math.round(ir1.bottom))
+              ok('1×4 格子内名称在格子内部',
+                fr1.bottom <= tr1.bottom + 1 && fr1.top < tr1.bottom,
+                'fill.bottom=' + Math.round(fr1.bottom) + ' tile.bottom=' + Math.round(tr1.bottom))
+              ok('1×4 格子内名称横向铺满格子', fr1.w >= tr1.w - 14,
+                Math.round(fr1.w) + ' vs ' + Math.round(tr1.w))
+              ok('1×4 底部名称回到格子下方（原有逻辑）', lr1.top >= tr1.bottom - 1,
+                Math.round(lr1.top) + ' vs ' + Math.round(tr1.bottom))
 
-              // ③ 拉回 1×1 → 名称回到格子下方
-              KL.store.updateShortcut(target, { col: 1, row: 1 })
+              // ③ 无字模式：格子内那份要留下，格子下方那份隐藏
+              KL.store.setSetting('showLabels', false)
               return sleep(200).then(function () {
-                var t0 = tileOf(target)
-                ok('1×1 不带拉长标记',
-                  !t0.classList.contains('tall') && !t0.classList.contains('wide'), t0.className)
-                var lr0 = rectOf(labelOf(t0))
-                ok('1×1 名称回到格子下方', lr0.top >= rectOf(t0).bottom - 1,
-                  Math.round(lr0.top) + ' vs ' + Math.round(rectOf(t0).bottom))
-                finish(out)
+                var t1h = tileOf(target)
+                ok('无字模式：格子内名称仍然显示（不受开关影响）', fillVisible(t1h),
+                  W.getComputedStyle(fillOf(t1h)).display)
+                ok('无字模式：格子下方名称隐藏',
+                  W.getComputedStyle(labelOf(t1h)).display === 'none',
+                  W.getComputedStyle(labelOf(t1h)).display)
+                ok('无字模式：图标仍然贴顶', rectOf(t1h.querySelector('.icon-box')).top - rectOf(t1h).top <= 10,
+                  Math.round(rectOf(t1h.querySelector('.icon-box')).top - rectOf(t1h).top))
+
+                // ④ 拉回 1×1 → 格子内名称收起来、下方名称回来
+                KL.store.setSetting('showLabels', true)
+                KL.store.updateShortcut(target, { col: 1, row: 1 })
+                return sleep(200).then(function () {
+                  var t0 = tileOf(target)
+                  ok('1×1 不带拉长标记',
+                    !t0.classList.contains('tall') && !t0.classList.contains('wide'), t0.className)
+                  ok('1×1 收起格子内名称', !fillVisible(t0))
+                  var lr0 = rectOf(labelOf(t0))
+                  ok('1×1 名称仍在格子下方', lr0.top >= rectOf(t0).bottom - 1,
+                    Math.round(lr0.top) + ' vs ' + Math.round(rectOf(t0).bottom))
+                  finish(out)
+                })
               })
             })
           })

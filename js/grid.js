@@ -964,9 +964,15 @@
   }
 
   /* 拉长的格子（1×n / n×1）：图标按 1×1 大小贴到**上 / 左**，不再两边留白，
-     空出来的地方用来写名称（见 css 的 .tile.tall / .tile.wide）。
-     只跟形状有关，跟「显示/隐藏名称」开关无关 —— 免得拉伸和开关两个变量互相打架。
+     空出来的那块地方用来常驻显示一份名称（见 css 的 .tile-name-fill）。
+     这份名称**不受「显示/隐藏名称」开关影响** —— 它本来就是给无字模式准备的；
+     格子下方那份 .label 仍然走原来的逻辑（受开关控制）。
+     只跟形状有关，跟开关无关 —— 免得"拉伸"和"开关"两个变量互相打架。
      文件夹不参与：它的格子里装的是内部图标，没有"空白处"可用。 */
+  function isElongated (col, row) {
+    return (col === 1 && row > 1) || (row === 1 && col > 1)
+  }
+
   function applyElongatedClass (node, col, row) {
     node.classList.toggle('tall', col === 1 && row > 1)
     node.classList.toggle('wide', row === 1 && col > 1)
@@ -996,6 +1002,12 @@
     label.title = sc.name
     tile.appendChild(label)
 
+    // 格子内部那份常驻名称：普通格子里是隐藏的（CSS 控制），拉长时才露出来
+    const fill = el('div', 'tile-name-fill')
+    fill.textContent = sc.name
+    fill.title = sc.name
+    tile.appendChild(fill)
+
     const resize = el('div', 'resize', RESIZE_SVG)
     resize.title = '拖动调整尺寸'
     tile.appendChild(resize)
@@ -1006,7 +1018,8 @@
       tile.appendChild(badge)
     }
 
-    attachNameTip(tile, sc.name)
+    // 拉长的格子里名称常驻可见，不需要再悬浮弹气泡（和其它"名称已显示"的情况一致）
+    if (!isElongated(sc.col, sc.row)) attachNameTip(tile, sc.name)
 
     tile.addEventListener('click', e => {
       const mode = store.settings.launchOnDoubleClick
