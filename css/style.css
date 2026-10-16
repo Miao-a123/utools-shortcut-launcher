@@ -223,7 +223,12 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   display: grid;
   grid-template-columns: repeat(auto-fill, var(--cell));
   grid-auto-rows: var(--cell);
-  gap: var(--gap);
+  column-gap: var(--gap);
+  /* 有字模式下纵向间距由 JS 按「名称 + 间距」算好写进 --gap-y：
+     名称画在格子外面（见 .tile .label），不留出这段高度下一行会压到名称上 */
+  row-gap: var(--gap-y, var(--gap));
+  /* 最后一行的名称也在格子外面，网格自己要留出底部空间，否则会被 .content 裁掉 */
+  padding-bottom: var(--label-pad, 0px);
   grid-auto-flow: row dense;
   align-content: start;
 }
@@ -241,7 +246,8 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   background: var(--tile-bg, transparent);
   color: var(--text-2);
   cursor: pointer;
-  overflow: hidden;
+  /* 名称要能画到格子下面，所以不能裁 */
+  overflow: visible;
   transition: background .12s, border-color .12s, transform .1s;
 }
 .tile:hover { background: var(--hover); color: var(--text); }
@@ -265,12 +271,17 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   flex: 0 0 auto;
 }
 .tile img.icon { width: 100%; height: 100%; object-fit: contain; -webkit-user-drag: none; }
+/* 名称画在**格子下方**（不占格子内部空间，也就不再挤压图标）：
+   图标与格子大小保持不变，靠 .grid 的 row-gap（--gap-y）给它腾出位置。 */
 .tile .label {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0; right: 0;
   max-width: 100%;
   font-size: 11.5px;
   line-height: 1.25;
-  /* 固定占两行高度：否则一行/两行名称的内容总高不同，
-     在 justify-content:center 下会把图标推到不同位置，造成图标不对齐 */
+  /* 固定占两行高度：行距是按两行预留的，一行名称也占同样的高度，
+     这样每一行的间距才是均匀的 */
   min-height: 2.5em;
   text-align: center;
   overflow: hidden;
@@ -280,12 +291,16 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   -webkit-box-orient: vertical;
   word-break: break-all;
 }
+/* 文件夹标题里的数量：和名称同一行、弱化显示 */
+.tile .label .label-count { color: var(--text-3); margin-left: 4px; }
 .grid.hide-labels .tile .label { display: none; }
 .grid.hide-labels .tile { gap: 0; }
 
 /* ---------------- folders ---------------- */
 
-.tile.folder { overflow: hidden; }
+/* 文件夹的标题现在也是 .tile .label（画在格子下方），所以文件夹 tile 不能裁内容，
+   否则名称会被裁掉。内部图标的裁剪由 .folder-inner 自己负责。 */
+.tile.folder { overflow: visible; }
 .tile.drop-into { border-color: var(--accent) !important; background: var(--accent-soft) !important; }
 
 /* ---------------- 自由摆放（关闭「自动对齐」） ----------------
@@ -316,32 +331,18 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   font-size: 10.5px; line-height: 16px; text-align: center; font-weight: 600;
 }
 
+/* 大文件夹：内部只有 .folder-inner（标题已经移到格子下方，不占内部空间） */
 .tile.folder-big {
   align-items: stretch; justify-content: flex-start;
-  gap: 4px; padding: 6px;
+  padding: 6px;
 }
-.tile .folder-head {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11px; color: var(--text-2);
-  flex: 0 0 auto; cursor: pointer;
-  border-radius: 6px; padding: 1px 4px; margin: -1px -4px;
-  max-width: 100%;
-}
-.tile .folder-head:hover { background: var(--hover); color: var(--text); }
-.tile .folder-head .folder-name {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600;
-}
-.tile .folder-head .folder-count { color: var(--text-3); flex: 0 0 auto; }
 .tile .folder-inner {
   display: grid; justify-content: start; align-content: start;
   flex: 1 1 auto; min-height: 0;
-  /* overflow:hidden 既是"不出现滚动条、不占宽度"，也仍然是滚动容器 ——
-     滚轮通过 JS 改 scrollTop 按整行滚动（见 attachInnerScroll），
-     所以既不会把一行图标裁掉半截，也不需要分页器之类的悬浮控件去占图标区。 */
+  /* 只渲染整行（每页 rows × cols），所以 overflow:hidden 只是兜底：
+     不会有滚动条、不会有"某一行被裁掉半截"，翻页由 JS 改内容（见 attachFolderPaging） */
   overflow: hidden;
 }
-/* 大文件夹的标题栏（名称 + 数量）常驻显示 —— 图标文字开关管的是图标名称，
-   文件夹自己的名字属于导航信息，两种模式下都要看得见（JS 里也是无条件渲染）。 */
 
 .inner-tile {
   position: relative;

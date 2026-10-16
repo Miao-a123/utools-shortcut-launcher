@@ -48,8 +48,10 @@
     // 所以跨度统一由像素尺寸反推。
     function snapshot () {
       var snap = {}
+      // 名称画在格子外面之后纵向步长和横向不同（gapY > gapX），两者要分开算
       var m = KL.grid.gridMetrics()
-      var step = m.cell + m.gap
+      var stepX = m.cell + m.gapX
+      var stepY = m.cell + m.gapY
       tiles().forEach(function (t) {
         var r = t.getBoundingClientRect()
         var cs = W.getComputedStyle(t)
@@ -58,8 +60,8 @@
           w: Math.round(r.width), h: Math.round(r.height),
           colStart: parseInt(cs.gridColumnStart, 10),
           rowStart: parseInt(cs.gridRowStart, 10),
-          spanCol: Math.max(1, Math.round((r.width + m.gap) / step)),
-          spanRow: Math.max(1, Math.round((r.height + m.gap) / step))
+          spanCol: Math.max(1, Math.round((r.width + m.gapX) / stepX)),
+          spanRow: Math.max(1, Math.round((r.height + m.gapY) / stepY))
         }
       })
       return snap
@@ -80,8 +82,8 @@
     function occupiedAt (snap, cx, cy) {
       var m = KL.grid.gridMetrics()
       var r = gridEl.getBoundingClientRect()
-      var gx = r.left + cx * (m.cell + m.gap)
-      var gy = r.top + cy * (m.cell + m.gap)
+      var gx = r.left + cx * (m.cell + m.gapX)
+      var gy = r.top + cy * (m.cell + m.gapY)
       for (var id in snap) {
         var s = snap[id]
         if (gx >= s.left - 2 && gx < s.left + s.w - 2 && gy >= s.top - 2 && gy < s.top + s.h - 2) return id
@@ -96,8 +98,8 @@
       var m = KL.grid.gridMetrics()
       var r = gridEl.getBoundingClientRect()
       return {
-        x: r.left + cx * (m.cell + m.gap) + m.cell / 2,
-        y: r.top + cy * (m.cell + m.gap) + m.cell / 2,
+        x: r.left + cx * (m.cell + m.gapX) + m.cell / 2,
+        y: r.top + cy * (m.cell + m.gapY) + m.cell / 2,
         m: m
       }
     }

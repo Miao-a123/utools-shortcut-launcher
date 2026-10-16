@@ -56,12 +56,33 @@
       var overflowY = W.getComputedStyle(inner).overflowY
       ok('内部不出现滚动条（overflow:hidden）', overflowY === 'hidden', overflowY)
 
-      // 标题栏（名称 + 数量）常驻：两种模式下都要有，且不再有右上角数量角标
-      ok('显示文件夹标题栏', !!tile.querySelector('.folder-head .folder-name'),
-        (tile.querySelector('.folder-head .folder-name') || {}).textContent)
-      ok('标题栏里带数量', !!tile.querySelector('.folder-head .folder-count'),
-        (tile.querySelector('.folder-head .folder-count') || {}).textContent)
-      ok('不再有右上角数量角标', !tile.querySelector('.folder-badge'))
+      // 文件夹标题现在是**格子下方的 .label**（和图标名称同一套逻辑），带名称 + 数量
+      function folderLabelOf (tl) {
+        var found = null
+        Array.prototype.forEach.call(tl.children, function (c) {
+          if (c.classList.contains('label')) found = c
+        })
+        return found
+      }
+      var flabel = folderLabelOf(tile)
+      ok('文件夹标题是格子外的 label', !!flabel)
+      var nameEl = flabel ? flabel.querySelector('.label-name') : null
+      ok('标题里是文件夹名称', !!nameEl && nameEl.textContent === folder.name,
+        nameEl ? JSON.stringify(nameEl.textContent) : '无')
+      var cntEl = flabel ? flabel.querySelector('.label-count') : null
+      ok('标题里带数量', !!cntEl, cntEl ? cntEl.textContent : '无')
+      if (labels) {
+        ok('标题在文件夹格子下方',
+          flabel && flabel.getBoundingClientRect().top >= tile.getBoundingClientRect().bottom - 1,
+          flabel ? Math.round(flabel.getBoundingClientRect().top) + ' vs ' + Math.round(tile.getBoundingClientRect().bottom) : '无')
+      } else {
+        // 无字模式下和图标名称一样隐藏（同等的显示逻辑），所以不看位置
+        ok('无字模式文件夹标题与图标名称一样隐藏',
+          !!flabel && W.getComputedStyle(flabel).display === 'none',
+          flabel ? W.getComputedStyle(flabel).display : '无 label')
+      }
+      ok('不再有内嵌标题栏 / 右上角角标',
+        !tile.querySelector('.folder-head') && !tile.querySelector('.folder-badge'))
 
       /* ---- 内部图标一律不显示名称（两种模式都是） ---- */
       ok('内部图标不渲染名称元素', !inner.querySelector('.inner-tile .label'))
@@ -70,10 +91,7 @@
       // 行高以前是 unit + 22（名称行），现在不再为名称留位置
       ok('行高不再为名称留位置', rowH === mUnit, 'rowH=' + rowH + ' unit=' + mUnit)
 
-      /* ---- 内部一律不渲染分页器（它会在某些尺寸下压到图标，已彻底删除） ---- */
-      ok('不渲染分页器', !tile.querySelector('.folder-pager') && !D.querySelector('.folder-pager'))
-
-      // 塞 40 个子项撑到内容超出容器
+      // 塞 40 个子项撑出多页
       var kid0 = KL.store.childrenOf(folder.id)[0]
       for (var i = 0; i < 40; i++) {
         KL.store.shortcuts.push(Object.assign({}, kid0, { id: 'tk' + (Date.now()) + '_' + i, name: '测试项 ' + i }))
@@ -84,81 +102,89 @@
       inner = tile.querySelector('.folder-inner')
       rowH = parseInt(inner.style.gridAutoRows, 10)
       var mGap = parseInt(inner.style.gap, 10)
-      ok('仍然不渲染分页器', !tile.querySelector('.folder-pager'))
-      ok('所有子项都已渲染（不再按页切片）',
-        inner.querySelectorAll('.inner-tile').length === kidTotal,
-        inner.querySelectorAll('.inner-tile').length + '/' + kidTotal)
+      var mRows = Math.max(1, Math.floor((inner.clientHeight + mGap) / (rowH + mGap)))
+      var pageCap = mCols * mRows
+      var pages = Math.ceil(kidTotal / pageCap)
 
-      var step = rowH + mGap
-      var maxTop = inner.scrollHeight - inner.clientHeight
-      ok('内容超出容器（需要滚动）', maxTop > step, 'maxTop=' + maxTop + ' step=' + step)
+      /* ---- 分页：每页整 rows × cols 个，且**没有页标** ---- */
+      ok('不渲染分页器',
+        !tile.querySelector('.folder-pager') && !D.querySelector('.folder-pager'))
+      ok('每页容量 > 0 且确实需要多页', pageCap > 0 && pages > 1,
+        'pageCap=' + pageCap + ' pages=' + pages + ' kids=' + kidTotal)
 
+      // 每个内部图标要么完整可见、要么完全在视野外（分页只渲染整行）
+      function clippedCount () {
+        var ir = inner.getBoundingClientRect()
+        var n = 0
+        Array.prototype.forEach.call(inner.querySelectorAll('.inner-tile'), function (t2) {
+          var r = t2.getBoundingClientRect()
+          var vis = Math.min(r.bottom, ir.bottom) - Math.max(r.top, ir.top)
+          if (vis > 1 && vis < r.height - 1) n++
+        })
+        return n
+      }
+      function rendered () { return inner.querySelectorAll('.inner-tile').length }
+      function firstId () {
+        var t2 = inner.querySelector('.inner-tile')
+        return t2 ? t2.dataset.id : ''
+      }
       function wheel (dy) {
         var ev = new W.WheelEvent('wheel', { deltaY: dy, cancelable: true, bubbles: true })
         inner.dispatchEvent(ev)
         return ev
       }
-      /* 按行吸附的核心保证：只会"最底下那一行"露一半（那正好也是"下面还有"的提示），
-         绝不会出现上面某一行被裁 —— 也就是不会停在半行的位置上。 */
-      function partialRows () {
-        var ir = inner.getBoundingClientRect()
-        var cutTop = 0
-        var cutBottom = 0
-        Array.prototype.forEach.call(inner.querySelectorAll('.inner-tile'), function (t2) {
-          var r = t2.getBoundingClientRect()
-          var vis = Math.min(r.bottom, ir.bottom) - Math.max(r.top, ir.top)
-          if (vis <= 1 || vis >= r.height - 1) return
-          if (r.top < ir.top - 1) cutTop++
-          else cutBottom++
-        })
-        return { cutTop: cutTop, cutBottom: cutBottom }
-      }
-      function noTopClip (label) {
-        var p = partialRows()
-        ok(label, p.cutTop === 0 && p.cutBottom <= mCols, 'cutTop=' + p.cutTop + ' cutBottom=' + p.cutBottom)
-        return p
-      }
 
-      ok('初始停在顶部', inner.scrollTop === 0, String(inner.scrollTop))
-      noTopClip('初始只有最底下那行露一半')
+      ok('第一页只渲染一页的量', rendered() === Math.min(kidTotal, pageCap),
+        rendered() + '/' + Math.min(kidTotal, pageCap))
+      ok('只渲染整行（每行都是完整的）', rendered() % mCols === 0, rendered() + ' 列=' + mCols)
+      ok('第一页没有图标被裁', clippedCount() === 0, 'clipped=' + clippedCount())
 
+      var id0 = firstId()
       var ev1 = wheel(120)
-      ok('滚轮向下滚一整行', inner.scrollTop === step && ev1.defaultPrevented,
-        'scrollTop=' + inner.scrollTop + ' step=' + step + ' prevented=' + ev1.defaultPrevented)
-      noTopClip('滚动后依然只有最底下那行露一半')
+      ok('滚轮向下翻一页', firstId() !== id0 && ev1.defaultPrevented,
+        id0 + '→' + firstId() + ' prevented=' + ev1.defaultPrevented)
+      ok('翻页后仍然只渲染整行', rendered() % mCols === 0, rendered() + ' 列=' + mCols)
+      ok('翻页后没有图标被裁', clippedCount() === 0, 'clipped=' + clippedCount())
 
       var evBack = wheel(-120)
-      ok('滚轮向上滚回顶部', inner.scrollTop === 0, String(inner.scrollTop))
-      ok('顶部再向上滚 → 放行给外层', (function () {
-        var e2 = wheel(-120)
-        return e2.defaultPrevented === false
-      })())
+      ok('滚轮向上翻回上一页', firstId() === id0, firstId())
+      ok('第一页再向上滚 → 放行给外层', wheel(-120).defaultPrevented === false)
 
-      // 一路滚到底
+      // 一路翻到最后一页
       var guard = 0
+      var beforeLast = ''
       while (guard++ < 100) {
+        beforeLast = firstId()
         var e3 = wheel(120)
-        if (inner.scrollTop >= maxTop - 0.5) break
         if (!e3.defaultPrevented) break
       }
-      ok('能滚到底', inner.scrollTop >= maxTop - 0.5, inner.scrollTop + '/' + maxTop)
-      // 滚到底时底部要贴齐（不能有内容看不见），此时最上面那行可能只露一半 ——
-      // 因为内容总高不是容器高的整数倍，只能二选一：要么底部对齐留半行在顶上，
-      // 要么停在整行边界导致最后一行永远看不全。选前者。
-      var atEnd = partialRows()
-      ok('到底后底部贴齐、最多只有最上面那行露一半',
-        atEnd.cutBottom === 0 && atEnd.cutTop <= mCols,
-        'cutTop=' + atEnd.cutTop + ' cutBottom=' + atEnd.cutBottom)
-      var evEnd = wheel(120)
-      ok('到底后再向下滚 → 放行给外层', evEnd.defaultPrevented === false)
+      ok('能翻到最后一页', beforeLast !== '', beforeLast)
+      ok('到最后一页后再滚内容不变', (function () {
+        var a = firstId()
+        wheel(120)
+        return firstId() === a
+      })())
+      ok('最后一页最后一行可能不满，但没有图标被裁',
+        clippedCount() === 0, 'clipped=' + clippedCount() + ' rendered=' + rendered())
+      ok('最后一页没有图标被裁', clippedCount() === 0, 'clipped=' + clippedCount())
+      ok('最后一页数量正确', rendered() === kidTotal - (pages - 1) * pageCap,
+        rendered() + ' vs ' + (kidTotal - (pages - 1) * pageCap))
 
-      // 滚轮只按整行走：中途停住时 scrollTop 一定是整行倍数（除了到底被 maxTop 截断）
-      wheel(-120)
-      ok('往上一行落在整行边界', inner.scrollTop % step === 0 || inner.scrollTop >= maxTop - 0.5,
-        'scrollTop=' + inner.scrollTop + ' %=' + (inner.scrollTop % step))
+      // 翻回第一页（向上滚到底）
+      var guard2 = 0
+      while (guard2++ < 100) {
+        var e4 = wheel(-120)
+        if (!e4.defaultPrevented) break
+      }
+      ok('能翻回第一页', firstId() === id0, firstId())
 
-      // 无字模式下滚动后标题栏不能掉（它是常驻的导航信息）
-      if (!labels) ok('无字模式滚动后标题栏仍在', !!tile.querySelector('.folder-head .folder-name'))
+      // 无字模式下文件夹名称与图标名称一样隐藏（翻页只换内部内容，名称不受影响）
+      if (!labels) {
+        var fl3 = folderLabelOf(tile)
+        ok('无字模式下文件夹名称与图标名称一样隐藏',
+          !!fl3 && W.getComputedStyle(fl3).display === 'none',
+          fl3 ? W.getComputedStyle(fl3).display : '无 label')
+      }
 
       /* ---- 点击大文件夹"任意空白处" = 打开文件夹 ----
          用 modalCount 判断（同步增减），别用 .fv-grid 是否存在 ——
@@ -183,12 +209,14 @@
       ok('点内部空隙也打开视图', KL.ui.modalCount === base + 1, 'modal=' + KL.ui.modalCount)
       closeModal()
 
-      // ③ 点标题栏也打开（标题栏常驻可见，是最自然的入口）
-      var head2 = tile.querySelector('.folder-head')
-      if (head2) {
-        head2.dispatchEvent(new W.MouseEvent('click', { bubbles: true }))
-        ok('点标题栏打开文件夹', KL.ui.modalCount === base + 1, 'modal=' + KL.ui.modalCount)
+      // ③ 点文件夹名称（格子下方那个 label）也打开
+      var fl2 = folderLabelOf(tile)
+      if (fl2) {
+        fl2.dispatchEvent(new W.MouseEvent('click', { bubbles: true }))
+        ok('点文件夹名称打开文件夹', KL.ui.modalCount === base + 1, 'modal=' + KL.ui.modalCount)
         closeModal()
+      } else {
+        ok('点文件夹名称打开文件夹', false, '找不到 label')
       }
 
       // ④ 点内部图标 = 启动该项，不是打开文件夹（放最后：启动会触发重渲染）
@@ -202,19 +230,19 @@
         ok('点内部图标不打开文件夹', KL.ui.modalCount === base, 'modal=' + KL.ui.modalCount)
       }
 
-      /* ---- 内容没超出容器时，滚轮不能拦（要让外层页面照常滚） ---- */
+      /* ---- 只有一页时滚轮不能被拦（要让外层页面照常滚） ---- */
       KL.store.batch(function () {
         KL.store.childrenOf(folder.id).slice(4).forEach(function (k) { KL.store.removeShortcut(k.id) })
       })
       var tile4 = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
       var inner4 = tile4.querySelector('.folder-inner')
-      var fit = inner4.scrollHeight - inner4.clientHeight <= 1
+      var kids4 = KL.store.childrenOf(folder.id).length
+      var shown4 = inner4.querySelectorAll('.inner-tile').length
       var evFit = new W.WheelEvent('wheel', { deltaY: 120, cancelable: true, bubbles: true })
       inner4.dispatchEvent(evFit)
-      ok('内容不超出时不消费滚轮',
-        fit && evFit.defaultPrevented === false,
-        'fits=' + fit + ' scrollH=' + inner4.scrollHeight + ' clientH=' + inner4.clientHeight +
-        ' prevented=' + evFit.defaultPrevented)
+      ok('只有一页时全部渲染、且滚轮不被消费',
+        shown4 === kids4 && evFit.defaultPrevented === false,
+        'shown=' + shown4 + '/' + kids4 + ' prevented=' + evFit.defaultPrevented)
       ok('收尾时也没有分页器', !D.querySelector('.folder-pager'))
     } catch (e) {
       out.push('ERROR:' + (e && e.message))

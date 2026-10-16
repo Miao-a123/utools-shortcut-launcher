@@ -55,6 +55,19 @@
        · 窗口变窄导致的临时挤压也不会破坏用户已经摆好的位置（窗口变宽就复原）。 */
 
   const GRID_GAP = 10
+  const LABEL_GAP = 4      // 名称与格子下沿之间的距离
+  const LABEL_BOX = 29     // 名称占的高度（11.5px × 1.25 × 2 行 ≈ 29）
+
+  /* 名称画在**格子外面**（见 css 的 .tile .label），所以有字模式下每一行之间
+     要多留出「名称 + 一点间隔」的高度，否则下一行的图标会压到名称上。
+     图标本身不再为文字让位 —— 两种模式下图标和格子大小完全一致。 */
+  function labelSpace () {
+    return store.settings.showLabels ? LABEL_GAP + LABEL_BOX : 0
+  }
+
+  function rowGapY () {
+    return GRID_GAP + labelSpace()
+  }
 
   function freeMode () {
     return store.settings.autoAlign === false
@@ -69,7 +82,8 @@
       if (tpl && tpl !== 'none') cols = tpl.trim().split(/\s+/).filter(Boolean).length
     } catch (e) {}
     if (!cols) cols = Math.floor(((gridEl.clientWidth || 0) + GRID_GAP) / (cell + GRID_GAP))
-    return { cell: cell, gap: GRID_GAP, cols: Math.max(1, cols) }
+    // gap = 横向间距；纵向间距（gapY）在有字模式下更大，因为名称画在格子外面
+    return { cell: cell, gap: GRID_GAP, gapX: GRID_GAP, gapY: rowGapY(), cols: Math.max(1, cols) }
   }
 
   // 占位登记 + 找空位。列数变化时会被重新构造，所以不缓存状态。
@@ -152,10 +166,9 @@
   // 鼠标落在第几格（左上角对齐）
   function cellFromPoint (clientX, clientY, m) {
     const r = gridEl.getBoundingClientRect()
-    const step = m.cell + m.gap
     return {
-      x: Math.max(0, Math.floor((clientX - r.left) / step)),
-      y: Math.max(0, Math.floor((clientY - r.top) / step))
+      x: Math.max(0, Math.floor((clientX - r.left) / (m.cell + m.gapX))),
+      y: Math.max(0, Math.floor((clientY - r.top) / (m.cell + m.gapY)))
     }
   }
 
@@ -392,10 +405,9 @@
 
   function tilePixelBox (sc) {
     const cell = currentCell()
-    const gap = 10
     return {
-      w: cell * sc.col + gap * (sc.col - 1),
-      h: cell * sc.row + gap * (sc.row - 1)
+      w: cell * sc.col + GRID_GAP * (sc.col - 1),
+      h: cell * sc.row + rowGapY() * (sc.row - 1)
     }
   }
 
@@ -412,16 +424,30 @@
     if (KL.dialogs && KL.dialogs.folderView) KL.dialogs.folderView(id)
   }
 
+  /* 文件夹的标题：位置、字号、折行、显隐完全走和图标名称同一套（都是 .label），
+     只是额外带一个数量。挂在 tile 上就是格子下方，点它自然冒泡到 tile → 打开文件夹。 */
+  function folderLabel (sc, count) {
+    const label = el('div', 'label')
+    label.title = sc.name
+    const n = el('span', 'label-name', sc.name)
+    label.appendChild(n)
+    if (count) label.appendChild(el('span', 'label-count', String(count)))
+    return label
+  }
+
   // 大文件夹内部的单元尺寸：图标档位给出图标尺寸上限，列数按文件夹可用宽度
   // 自适应——先按档位尺寸试排，右侧剩下的空白超过能多塞一列时自动缩一点图标
   // 把列数加满（下限 80% 档位值，避免为了填满把图标缩得认不出）。
   //
-  // 放不下的内容靠**按行吸附的滚轮滚动**浏览（见 attachInnerScroll）：
-  // 容器是 overflow:hidden，滚轮每次把 scrollTop 挪一整行，所以永远停在整行边界上，
-  // 不会像以前那样把一行图标裁掉半截；而且完全不占图标显示空间。
-  // 曾经用过一个悬浮在右下角的「‹ 1/2 ›」分页器，它在某些尺寸下会压到图标，已删除。
+  // 内容超出时**整页翻动**（`rows` 行 × `cols` 列一页，见 renderFolderPage）：
+  // 只渲染整行，所以永远不会出现"某一行被裁掉半截"。翻页只用滚轮，**不做任何
+  // 页标 / 页码 UI** —— 悬浮在图标区上的控件一定会占地方，曾经那版「‹ 1/2 ›」
+  // 就是因此在某些尺寸下压到图标被删掉的。
   //
-  // 大文件夹内部**一律不显示图标名称**：名称改由光标气泡给出（见 attachNameTip）。
+  // 文件夹的标题不在这里，它和图标名称一样画在**格子下方**（见 folderLabel），
+  // 所以 headH 恒为 0 —— 内部空间一点不被标题占。
+  //
+  // 内部图标**一律不显示图标名称**：名称靠光标气泡（attachNameTip(…, true)）。
   const INNER_CHROME = 8      // inner-tile 上下 padding 2px×2 + 边框 1px×2 + 行内 gap 2px
 
   function innerMetrics (folderSc) {
@@ -430,7 +456,7 @@
     const scale = folderScale()
     const gap = Math.max(3, Math.round(4 * scale))
     const pad = 6
-    const headH = 20     // 标题栏常驻（名称 + 数量），不受图标文字开关影响
+    const headH = 0      // 标题在格子外面，不占内部空间
     const innerW = Math.max(40, box.w - pad * 2)
     const innerH = Math.max(30, box.h - pad * 2 - headH)
     const iconMax = Math.max(26, Math.round(cell * scale))
@@ -447,8 +473,9 @@
       if (ic >= iconMin && used > bestUsed) { bestUsed = used; cols = c; icon = ic }
     }
     const rowH = icon + INNER_CHROME
+    const rows = Math.max(1, Math.floor((innerH + gap) / (rowH + gap)))
     return {
-      cols: cols, icon: icon, unit: icon + INNER_CHROME, rowH: rowH,
+      cols: cols, icon: icon, unit: icon + INNER_CHROME, rowH: rowH, rows: rows,
       gap: gap, pad: pad, labelH: 0, headH: headH,
       innerW: innerW, innerH: innerH
     }
@@ -462,45 +489,61 @@
     return clamp(Math.round(Math.min(w, h)), 16, 220)
   }
 
-  /* ---------------- 大文件夹内部：渲染 + 按行滚动 ----------------
-     全部子项一次性渲染进 .folder-inner；放不下的部分靠滚动看。
-     容器是 overflow:hidden（不出现滚动条、不占宽度），滚轮每次把 scrollTop
-     挪**一整行**，所以永远停在整行边界上 —— 既不会把一行图标裁掉半截，
-     也不需要任何悬浮 UI 去指示"第几页"。 */
+  /* ---------------- 大文件夹内部：分页 + 翻页 ----------------
+     每页 rows 行 × cols 列，只渲染整行 —— 永远不会出现"一行被裁掉半截"。
+     翻页入口只有滚轮，**没有页标**：图标区不能有任何悬浮控件。
+     翻页只重绘这个文件夹的内部，不整屏 render（页码存在 folderPage 里不会丢）。 */
 
-  function renderFolderInner (sc, inner, m, kids) {
+  const folderPage = {}    // folderId → 当前页码（0 起）
+
+  function folderPageCount (m, total) {
+    return Math.max(1, Math.ceil(total / (m.cols * m.rows)))
+  }
+
+  function renderFolderPage (sc, inner, m, kids) {
+    const pages = folderPageCount(m, kids.length)
+    let page = folderPage[sc.id] || 0
+    if (page >= pages) page = pages - 1
+    if (page < 0) page = 0
+    folderPage[sc.id] = page
     inner.innerHTML = ''
-    for (const k of kids) {
+    const show = kids.slice(page * m.cols * m.rows, (page + 1) * m.cols * m.rows)
+    for (const k of show) {
       const node = buildInnerTile(k, m, sc)
       inner.appendChild(node)
       tileNodes[k.id] = node
     }
+    return pages
   }
 
-  /* 内容超出容器高度时，用滚轮按行滚动；没有超出就不消费事件（交给外层页面滚）。
-     用"累积 delta"而不是"按时间节流"：鼠标滚轮一格 deltaY≈100+，一次就够一行；
-     触控板一次滑动会连发很多 deltaY≈1 的小事件，攒够一行才动 —— 两种设备都自然，
-     而且不依赖计时器（程序化派发事件也能得到确定的结果）。 */
-  function attachInnerScroll (inner, m) {
-    const step = m.rowH + m.gap
+  // 翻页后只重绘这个文件夹的内部，别整屏 render
+  function refreshFolderInner (sc) {
+    const tile = tileNodes[sc.id]
+    if (!tile) return
+    const inner = tile.querySelector('.folder-inner')
+    if (!inner) return
+    renderFolderPage(sc, inner, innerMetrics(sc), store.childrenOf(sc.id))
+  }
+
+  /* 滚轮翻页。翻到头就把事件**放行**给外层页面，免得用户被卡在文件夹里。
+     用"累积 delta"而不是按时间节流：鼠标滚轮一格 deltaY≈100+，一次就够一页；
+     触控板连发的小 delta 攒够一页（MIN_STEP）才动 —— 两种设备都自然，
+     而且不依赖计时器，程序化派发事件也能得到确定结果（测试正是靠这一点）。 */
+  function attachFolderPaging (inner, sc, pages) {
+    if (pages <= 1) return
     const MIN_STEP = 24
     let acc = 0
     inner.addEventListener('wheel', e => {
-      const maxTop = inner.scrollHeight - inner.clientHeight
-      if (maxTop <= 1) { acc = 0; return }          // 没超出 → 不拦，让页面自己滚
-      const dir = e.deltaY > 0 ? 1 : (e.deltaY < 0 ? -1 : 0)
-      if (!dir) return
-      // scrollTop 可能停在 maxTop（不一定是整行倍数），所以先按最近行取整
-      const cur = Math.round(inner.scrollTop / step)
-      const last = Math.ceil(maxTop / step)
-      const top = Math.min(clamp(cur + dir, 0, last) * step, maxTop)
-      if (top === inner.scrollTop) { acc = 0; return }   // 已经到顶 / 到底 → 放行给外层
+      const p = folderPage[sc.id] || 0
+      const down = e.deltaY > 0
+      if (down ? p >= pages - 1 : p <= 0) { acc = 0; return }
       e.preventDefault()
       e.stopPropagation()
       acc += e.deltaY
-      if (Math.abs(acc) < MIN_STEP) return               // 小步事件先攒着
+      if (Math.abs(acc) < MIN_STEP) return
       acc = 0
-      inner.scrollTop = top
+      folderPage[sc.id] = clamp(p + (down ? 1 : -1), 0, pages - 1)
+      refreshFolderInner(sc)
     }, { passive: false })
   }
 
@@ -528,35 +571,23 @@
       if (count) tile.appendChild(el('div', 'folder-badge', String(count)))
       attachNameTip(tile, sc.name)      // 小文件夹的标题同样会被无字模式隐藏
     } else {
-      // 大文件夹（m×n）：内部一次铺开，可直接点图标；放不下的用滚轮按行看
+      // 大文件夹（m×n）：内部整页平铺，可直接点图标；放不下的滚轮翻页
       tile.classList.add('folder-big')
       tile.style.gridColumn = 'span ' + sc.col
       tile.style.gridRow = 'span ' + sc.row
-      // 标题栏（名称 + 数量）**常驻显示**，不受"显示/隐藏名称"开关影响：
-      // 那个开关管的是图标文字，而文件夹自己的名字是导航信息 ——
-      // 藏起来之后在无字模式下完全没法认这是哪个文件夹。
-      const head = el('div', 'folder-head')
-      head.title = '点击查看全部图标'
-      const nameEl = el('span', 'folder-name')
-      nameEl.textContent = sc.name
-      head.appendChild(nameEl)
-      head.appendChild(el('span', 'folder-count', String(count)))
-      head.addEventListener('click', e => {
-        e.stopPropagation()
-        openFolderView(sc.id)
-      })
-      tile.appendChild(head)
       if (sc.color) tile.style.background = sc.color
       const m = innerMetrics(sc)
       const inner = el('div', 'folder-inner')
       inner.style.gridTemplateColumns = 'repeat(' + m.cols + ', ' + m.unit + 'px)'
       inner.style.gridAutoRows = m.rowH + 'px'
       inner.style.gap = m.gap + 'px'
-      renderFolderInner(sc, inner, m, store.childrenOf(sc.id))
+      const pages = renderFolderPage(sc, inner, m, store.childrenOf(sc.id))
       tile.appendChild(inner)
-      // 放不下的部分用滚轮按行看；没有任何悬浮控件，图标区一点都不被占
-      attachInnerScroll(inner, m)
-      // 名称常驻可见，所以这里不挂名称气泡 —— 免得和标题栏重复显示同一个名字
+      attachFolderPaging(inner, sc, pages)
+      // 文件夹的标题也画在**格子下方**，和图标名称同一套逻辑（同样受
+      // 「显示/隐藏名称」开关控制，无字模式下靠悬浮气泡）—— 只是多带一个数量
+      tile.appendChild(folderLabel(sc, count))
+      attachNameTip(tile, sc.name)
     }
 
     if (selected.has(sc.id)) tile.classList.add('selected')
@@ -736,7 +767,9 @@
     handle.addEventListener('mousedown', e => {
       e.preventDefault()
       e.stopPropagation()
-      const step = currentCell() + 10
+      // 横纵步长分开：有字模式下行距更大（名称画在格子外面）
+      const stepX = currentCell() + GRID_GAP
+      const stepY = currentCell() + rowGapY()
       const startX = e.clientX
       const startY = e.clientY
       const baseCol = sc.col
@@ -744,10 +777,10 @@
       let col = baseCol
       let row = baseRow
       const info = freeResizeInfo(tile)
-      const capCol = Math.min(4, Math.max(1, Math.floor((contentEl.clientWidth - 4) / step)), info.maxCol)
+      const capCol = Math.min(4, Math.max(1, Math.floor((contentEl.clientWidth - 4) / stepX)), info.maxCol)
       const onMove = ev => {
-        col = clamp(baseCol + Math.round((ev.clientX - startX) / step), 1, capCol)
-        row = clamp(baseRow + Math.round((ev.clientY - startY) / step), 1, 4)
+        col = clamp(baseCol + Math.round((ev.clientX - startX) / stepX), 1, capCol)
+        row = clamp(baseRow + Math.round((ev.clientY - startY) / stepY), 1, 4)
         tile.style.gridColumn = info.startCol ? info.startCol + ' / span ' + col : 'span ' + col
         tile.style.gridRow = info.startRow ? info.startRow + ' / span ' + row : 'span ' + row
       }
@@ -861,14 +894,12 @@
     ], { x: x, y: y })
   }
 
-  function iconSizeFor (sc, showLabels) {
+  /* 图标尺寸：只由格子大小决定 —— 名称已经移到格子**外面**，图标不再为文字让位，
+     所以有字 / 无字两种模式下图标大小完全一致。 */
+  function iconSizeFor (sc) {
     const box = tilePixelBox(sc)
     const base = Math.min(box.w, box.h)
-    if (!showLabels) return clamp(Math.round(base * 0.72), 22, 168)
-    // 预留两行文字 + 内边距/间距的高度，避免长名称第二行被裁掉
-    const labelH = 2 * 11.5 * 1.25 + 1
-    const chrome = 6 * 2 + 6
-    return clamp(Math.round(base - chrome - labelH), 22, 168)
+    return clamp(Math.round(base * 0.72), 22, 168)
   }
 
   /* ---------------- rendering ---------------- */
@@ -878,6 +909,10 @@
     const settings = store.settings
     const list = store.visible(currentCategory, keyword)
     gridEl.style.setProperty('--cell', currentCell() + 'px')
+    // 名称画在格子外面：有字模式下行距要多留出「名称 + 间距」，网格自己也要留出
+    // 底部空间，否则最后一行的名称会被 .content 的裁剪框切掉
+    gridEl.style.setProperty('--gap-y', rowGapY() + 'px')
+    gridEl.style.setProperty('--label-pad', labelSpace() + 'px')
     gridEl.classList.toggle('hide-labels', !settings.showLabels)
     gridEl.classList.toggle('free-layout', settings.autoAlign === false)
     // 重渲染会把正在悬浮的节点换掉，mouseleave 不会再触发 —— 主动收起气泡
@@ -935,7 +970,7 @@
     tile.draggable = true
     tile.style.gridColumn = 'span ' + sc.col
     tile.style.gridRow = 'span ' + sc.row
-    tile.style.setProperty('--icon-size', iconSizeFor(sc, settings.showLabels) + 'px')
+    tile.style.setProperty('--icon-size', iconSizeFor(sc) + 'px')
     if (selected.has(sc.id)) tile.classList.add('selected')
 
     const box = el('div', 'icon-box')
@@ -1059,7 +1094,8 @@
     handle.addEventListener('mousedown', e => {
       e.preventDefault()
       e.stopPropagation()
-      const step = currentCell() + 10
+      const stepX = currentCell() + GRID_GAP
+      const stepY = currentCell() + rowGapY()
       const startX = e.clientX
       const startY = e.clientY
       const baseCol = sc.col
@@ -1071,13 +1107,13 @@
         tile.style.gridColumn = info.startCol ? info.startCol + ' / span ' + col : 'span ' + col
         tile.style.gridRow = info.startRow ? info.startRow + ' / span ' + row : 'span ' + row
         const ghost = Object.assign({}, sc, { col: col, row: row })
-        tile.style.setProperty('--icon-size', iconSizeFor(ghost, store.settings.showLabels) + 'px')
+        tile.style.setProperty('--icon-size', iconSizeFor(ghost) + 'px')
       }
-      const maxCol = Math.max(1, Math.floor((contentEl.clientWidth - 4) / step))
+      const maxCol = Math.max(1, Math.floor((contentEl.clientWidth - 4) / stepX))
       const capCol = Math.min(4, Math.max(1, maxCol), info.maxCol)
       const onMove = ev => {
-        col = clamp(baseCol + Math.round((ev.clientX - startX) / step), 1, capCol)
-        row = clamp(baseRow + Math.round((ev.clientY - startY) / step), 1, 4)
+        col = clamp(baseCol + Math.round((ev.clientX - startX) / stepX), 1, capCol)
+        row = clamp(baseRow + Math.round((ev.clientY - startY) / stepY), 1, 4)
         applyVisual()
       }
       const onUp = () => {

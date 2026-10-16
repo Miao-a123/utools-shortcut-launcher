@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>grid-layout-test</title>
+  <style>
+    body { margin: 0; font: 12px/1.6 monospace; background: #fff; color: #111 }
+    #frame { width: 900px; height: 640px; border: 1px solid #ccc; display: block }
+    #log { padding: 8px 10px; white-space: pre-wrap }
+  </style>
+</head>
+<body>
+  <p style="font-size:12px;margin:6px 10px">主网格「图标 / 格子 / 名称」尺寸与位置 回归测试 ——
+    无头运行：<code>chrome --headless=new --allow-file-access-from-files --virtual-time-budget=8000 --dump-dom "tools/grid-layout-test.html"</code>，结果写在 &lt;title&gt;。</p>
+  <iframe id="frame" src="../index.html?theme=dark&labels=1"></iframe>
+  <div id="log"></div>
+  <script>
+  var frame = document.getElementById('frame')
+  frame.addEventListener('load', function () { setTimeout(run, 900) })
+
+  function run () {
+    var out = []
+    function ok (n, c, x) { out.push((c ? 'PASS' : 'FAIL') + ':' + n + (x !== undefined ? '[' + x + ']' : '')) }
+    function sleep (ms) { return new Promise(function (r) { setTimeout(r, ms) }) }
+
+    var W, D, KL
+    try { W = frame.contentWindow; D = frame.contentDocument; KL = W.KL } catch (e) {
+      out.push('ERROR:读不到 iframe 内容（file:// 下必须用 --allow-file-access-from-files）')
+      return finish(out)
+    }
+    if (!KL || !KL.grid) { out.push('ERROR:KL 未加载'); return finish(out) }
+
+    var gridEl = D.getElementById('grid')
+    var GRID_GAP = 10, LABEL_GAP = 4, LABEL_BOX = 29
+
+    function cell () { return parseInt(gridEl.style.getPropertyValue('--cell'), 10) }
+    function tiles () { return Array.prototype.slice.call(gridEl.querySelectorAll('.tile[data-id]')) }
+    function tileOf (id) { return gridEl.querySelector('.tile[data-id="' + id + '"]') }
+    function labelOf (t) {
+      // 只要直接子元素里的 .label（内部图标的那个是 .inner-tile 里，不算）
+      var kids = t.children
+      for (var i = 0; i < kids.length; i++) if (kids[i].classList.contains('label')) return kids[i]
+      return null
+    }
+    function rectOf (n) { var r = n.getBoundingClientRect(); return { top: r.top, left: r.left, right: r.right, bottom: r.bottom, w: r.width, h: r.height } }
+    function iconSizeOf (t) {
+      var b = t.querySelector('.icon-box')
+      return b ? Math.round(b.getBoundingClientRect().width) : 0
+    }
+    function overlapArea (a, b) {
+      var ox = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+      var oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+      return (ox > 0 && oy > 0) ? ox * oy : 0
+    }
+    // 同一列里上下相邻的两个 tile
+    function firstColumnPairs () {
+      var byCol = {}
+      tiles().forEach(function (t) {
+        var r = rectOf(t)
+        var k = String(Math.round(r.left))
+        if (!byCol[k]) byCol[k] = []
+        byCol[k].push(t)
+      })
+      for (var k in byCol) {
+        var list = byCol[k].sort(function (a, b) { return rectOf(a).top - rectOf(b).top })
+        if (list.length >= 2) return { up: list[0], down: list[1] }
+      }
+      return null
+    }
+    // 找一个 1×1 的普通图标（不是文件夹）
+    function find1x1 () {
+      var found = null
+      tiles().forEach(function (t) {
+        if (found) return
+        if (t.classList.contains('folder')) return
+        if (String(t.style.gridRow).indexOf('span 1') !== 0) return
+        if (String(t.style.gridColumn).indexOf('span 1') !== 0) return
+        found = t
+      })
+      return found
+    }
+
+    KL.store.setSetting('showLabels', true)
+    sleep(160).then(function () {
+      var c = cell()
+      ok('cell 读出', c > 0, String(c))
+
+      var one = find1x1()
+      ok('找到 1×1 图标', !!one)
+      var r1 = rectOf(one)
+      ok('格子高度 = cell（名称不再占格子内部）', Math.abs(r1.h - c) <= 1, r1.h + ' vs ' + c)
+      var iconShow = iconSizeOf(one)
+      ok('有字模式图标尺寸 = min(格宽,格高)×0.72',
+        Math.abs(iconShow - Math.round(c * 0.72)) <= 2, iconShow + ' vs ' + Math.round(c * 0.72))
+
+      var lb = labelOf(one)
+      ok('名称是 tile 的直接子元素 .label', !!lb)
+      var lbv = W.getComputedStyle(lb)
+      ok('有字模式名称可见', lbv.display !== 'none', lbv.display)
+      var lr = rectOf(lb)
+      ok('名称在格子下方', lr.top >= r1.bottom - 1, 'label.top=' + Math.round(lr.top) + ' tile.bottom=' + Math.round(r1.bottom))
+      ok('名称不压住格子', overlapArea(lr, r1) === 0, 'overlap=' + Math.round(overlapArea(lr, r1)))
+      ok('名称留了两行高度', lr.h >= LABEL_BOX - 2, String(Math.round(lr.h)))
+
+      // 行距：有字模式 = 基础间距 + 名称高度
+      var pair = firstColumnPairs()
+      ok('找到同列上下相邻的两个格子', !!pair)
+      if (pair) {
+        var gapShow = rectOf(pair.down).top - rectOf(pair.up).bottom
+        ok('有字模式行距 = 基础间距 + 名称高度',
+          Math.abs(gapShow - (GRID_GAP + LABEL_GAP + LABEL_BOX)) <= 2,
+          Math.round(gapShow) + ' vs ' + (GRID_GAP + LABEL_GAP + LABEL_BOX))
+        var upLabel = labelOf(pair.up)
+        ok('上一行的名称不压到下一行格子',
+          !upLabel || rectOf(upLabel).bottom <= rectOf(pair.down).top + 1,
+          upLabel ? Math.round(rectOf(upLabel).bottom) + ' vs ' + Math.round(rectOf(pair.down).top) : '无名称')
+      }
+      ok('列间距没被改（仍是基础间距）', (function () {
+        var byRow = {}
+        tiles().forEach(function (t) {
+          var r = rectOf(t)
+          var k = String(Math.round(r.top))
+          if (!byRow[k]) byRow[k] = []
+          byRow[k].push(t)
+        })
+        for (var k in byRow) {
+          var row = byRow[k].sort(function (a, b) { return rectOf(a).left - rectOf(b).left })
+          if (row.length >= 2) {
+            var g = rectOf(row[1]).left - rectOf(row[0]).right
+            if (Math.abs(g - GRID_GAP) <= 2) return true
+          }
+        }
+        return false
+      })())
+
+      // 最后一行的名称不能被网格裁掉（grid 自己要有 padding-bottom）
+      var gr = rectOf(gridEl)
+      var lastLabelBottom = 0
+      var lastTop = 0
+      tiles().forEach(function (t) {
+        var r = rectOf(t)
+        if (r.top > lastTop) { lastTop = r.top }
+      })
+      tiles().forEach(function (t) {
+        var r = rectOf(t)
+        if (Math.abs(r.top - lastTop) < 2) {
+          var l = labelOf(t)
+          if (l) lastLabelBottom = Math.max(lastLabelBottom, rectOf(l).bottom)
+        }
+      })
+      ok('最后一行的名称在网格框内（没被裁）', lastLabelBottom <= gr.bottom + 1,
+        'label.bottom=' + Math.round(lastLabelBottom) + ' grid.bottom=' + Math.round(gr.bottom))
+
+      /* ---- 切到无字模式：格子与图标大小都不能变，只是名称消失、行距收回 ---- */
+      var iconShowSizes = {}
+      tiles().forEach(function (t) { iconShowSizes[t.dataset.id] = iconSizeOf(t) })
+      KL.store.setSetting('showLabels', false)
+      return sleep(200).then(function () {
+        var lb2 = labelOf(tileOf(one.dataset.id))
+        ok('无字模式名称隐藏', !lb2 || W.getComputedStyle(lb2).display === 'none',
+          lb2 ? W.getComputedStyle(lb2).display : '无 label 元素')
+
+        var r2 = rectOf(tileOf(one.dataset.id))
+        ok('无字模式格子大小不变', Math.abs(r2.h - r1.h) <= 1 && Math.abs(r2.w - r1.w) <= 1,
+          r2.w + '×' + r2.h + ' vs ' + Math.round(r1.w) + '×' + Math.round(r1.h))
+
+        var changed = []
+        tiles().forEach(function (t) {
+          if (iconShowSizes[t.dataset.id] !== iconSizeOf(t)) changed.push(t.dataset.id)
+        })
+        ok('无字模式图标大小不变（不再为文字让位）', changed.length === 0, changed.slice(0, 3).join(','))
+
+        var pair2 = firstColumnPairs()
+        if (pair2) {
+          var gapHide = rectOf(pair2.down).top - rectOf(pair2.up).bottom
+          ok('无字模式行距收回基础间距', Math.abs(gapHide - GRID_GAP) <= 2,
+            Math.round(gapHide) + ' vs ' + GRID_GAP)
+        }
+
+        var gapY = parseInt(gridEl.style.getPropertyValue('--gap-y'), 10)
+        ok('--gap-y 跟着开关走', gapY === GRID_GAP, String(gapY))
+
+        /* ---- 文件夹的标题与图标名称同类 ---- */
+        KL.store.setSetting('showLabels', true)
+        return sleep(200).then(function () {
+          var folder = null
+          KL.store.shortcuts.forEach(function (s) {
+            if (!folder && s.kind === 'folder' && s.col * s.row > 1) folder = s
+          })
+          var ft = tileOf(folder.id)
+          var fl = labelOf(ft)
+          ok('大文件夹的标题也是 .tile > .label', !!fl)
+          ok('文件夹标题在文件夹格子下方',
+            fl && rectOf(fl).top >= rectOf(ft).bottom - 1,
+            fl ? Math.round(rectOf(fl).top) + ' vs ' + Math.round(rectOf(ft).bottom) : '无')
+          var nameEl = fl && fl.querySelector('.label-name')
+          ok('文件夹标题里是文件夹名称', !!nameEl && nameEl.textContent === folder.name,
+            nameEl ? JSON.stringify(nameEl.textContent) : '无')
+          ok('文件夹标题里带数量', !!fl.querySelector('.label-count'),
+            fl.querySelector('.label-count') ? fl.querySelector('.label-count').textContent : '无')
+          // 文件夹内部空间不再被标题占：内部高度 ≈ 格子高 - 内边距
+          var inner = ft.querySelector('.folder-inner')
+          var innerH = Math.round(inner.getBoundingClientRect().height)
+          ok('标题不占文件夹内部空间（inner 高度 ≈ 格子高 - 12）',
+            Math.abs(innerH - (Math.round(rectOf(ft).h) - 12)) <= 2,
+            innerH + ' vs ' + (Math.round(rectOf(ft).h) - 12))
+          finish(out)
+        })
+      })
+    }).catch(function (e) {
+      out.push('ERROR:' + (e && e.message))
+      finish(out)
+    })
+  }
+
+  function finish (out) {
+    var txt = out.join('  ')
+    document.getElementById('log').textContent = txt
+    document.title = txt
+  }
+  </script>
+</body>
+</html>
