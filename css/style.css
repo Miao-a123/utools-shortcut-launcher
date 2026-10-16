@@ -293,6 +293,30 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
 }
 /* 文件夹标题里的数量：和名称同一行、弱化显示 */
 .tile .label .label-count { color: var(--text-3); margin-left: 4px; }
+
+/* ---------------- 拉长的格子（1×n / n×1） ----------------
+   格子被拉长之后，把图标居中会在两边留下大片空白。改成：
+     1×n（竖条）→ 图标按 1×1 大小贴**顶**，名称写在下面那块空白里；
+     n×1（横条）→ 图标按 1×1 大小贴**左**，名称写在右边那块空白里。
+   也就是名称从"格子下方"挪进格子内部 —— 所以这几条要盖掉 .label 的绝对定位。 */
+.tile.tall {
+  justify-content: flex-start;
+}
+.tile.tall .label {
+  position: static; top: auto; left: auto; right: auto;
+  width: 100%;
+}
+.tile.wide {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 8px;
+}
+.tile.wide .label {
+  position: static; top: auto; left: auto; right: auto;
+  flex: 1 1 auto; min-width: 0;
+  text-align: left;
+}
+
 .grid.hide-labels .tile .label { display: none; }
 .grid.hide-labels .tile { gap: 0; }
 

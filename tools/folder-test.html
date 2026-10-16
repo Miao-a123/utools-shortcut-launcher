@@ -251,7 +251,9 @@
   }
 
   function finish (out) {
-    var txt = out.join('  ')
+    var failed = 0
+    out.forEach(function (l) { if (l.indexOf('PASS') !== 0) failed++ })
+    var txt = (failed ? ('FAILED ' + failed + ' | ') : 'ALL PASS | ') + out.join('  ')
     document.getElementById('log').textContent = txt
     document.title = txt
   }

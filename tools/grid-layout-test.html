@@ -204,7 +204,70 @@
           ok('标题不占文件夹内部空间（inner 高度 ≈ 格子高 - 12）',
             Math.abs(innerH - (Math.round(rectOf(ft).h) - 12)) <= 2,
             innerH + ' vs ' + (Math.round(rectOf(ft).h) - 12))
-          finish(out)
+
+          /* ---- 拉长的格子（1×n / n×1）：图标贴上/左，名称进格子内部 ---- */
+          var target = null
+          tiles().forEach(function (t) {
+            if (target) return
+            if (t.classList.contains('folder')) return
+            if (String(t.style.gridRow).indexOf('span 1') !== 0) return
+            if (String(t.style.gridColumn).indexOf('span 1') !== 0) return
+            target = t.dataset.id
+          })
+          ok('找到可拉伸的 1×1 图标', !!target, String(target))
+          var baseIcon = iconSizeOf(tileOf(target))
+
+          // ① 拉成 4×1（横条）
+          KL.store.updateShortcut(target, { col: 4, row: 1 })
+          return sleep(200).then(function () {
+            var t4 = tileOf(target)
+            var tr = rectOf(t4)
+            var ir = rectOf(t4.querySelector('.icon-box'))
+            var lr = rectOf(labelOf(t4))
+            ok('4×1 打上 wide 标记',
+              t4.classList.contains('wide') && !t4.classList.contains('tall'), t4.className)
+            ok('4×1 图标贴左边', ir.left - tr.left <= 10, Math.round(ir.left - tr.left))
+            ok('4×1 图标仍是 1×1 大小', Math.abs(iconSizeOf(t4) - baseIcon) <= 1,
+              iconSizeOf(t4) + ' vs ' + baseIcon)
+            ok('4×1 名称在图标右侧', lr.left >= ir.right - 2,
+              Math.round(lr.left) + ' vs icon.right=' + Math.round(ir.right))
+            ok('4×1 名称在格子内部（没挂到格子下面）',
+              lr.top >= tr.top - 1 && lr.bottom <= tr.bottom + 1 && lr.top < tr.bottom,
+              'label ' + Math.round(lr.top) + '..' + Math.round(lr.bottom) +
+              ' tile ' + Math.round(tr.top) + '..' + Math.round(tr.bottom))
+
+            // ② 拉成 1×4（竖条）
+            KL.store.updateShortcut(target, { col: 1, row: 4 })
+            return sleep(200).then(function () {
+              var t1 = tileOf(target)
+              var tr1 = rectOf(t1)
+              var ir1 = rectOf(t1.querySelector('.icon-box'))
+              var lr1 = rectOf(labelOf(t1))
+              ok('1×4 打上 tall 标记',
+                t1.classList.contains('tall') && !t1.classList.contains('wide'), t1.className)
+              ok('1×4 图标贴顶边', ir1.top - tr1.top <= 10, Math.round(ir1.top - tr1.top))
+              ok('1×4 图标仍是 1×1 大小', Math.abs(iconSizeOf(t1) - baseIcon) <= 1,
+                iconSizeOf(t1) + ' vs ' + baseIcon)
+              ok('1×4 名称在图标下方', lr1.top >= ir1.bottom - 2,
+                Math.round(lr1.top) + ' vs icon.bottom=' + Math.round(ir1.bottom))
+              ok('1×4 名称在格子内部', lr1.bottom <= tr1.bottom + 1 && lr1.top < tr1.bottom,
+                'label.bottom=' + Math.round(lr1.bottom) + ' tile.bottom=' + Math.round(tr1.bottom))
+              ok('1×4 名称横向铺满格子', lr1.w >= tr1.w - 14,
+                Math.round(lr1.w) + ' vs ' + Math.round(tr1.w))
+
+              // ③ 拉回 1×1 → 名称回到格子下方
+              KL.store.updateShortcut(target, { col: 1, row: 1 })
+              return sleep(200).then(function () {
+                var t0 = tileOf(target)
+                ok('1×1 不带拉长标记',
+                  !t0.classList.contains('tall') && !t0.classList.contains('wide'), t0.className)
+                var lr0 = rectOf(labelOf(t0))
+                ok('1×1 名称回到格子下方', lr0.top >= rectOf(t0).bottom - 1,
+                  Math.round(lr0.top) + ' vs ' + Math.round(rectOf(t0).bottom))
+                finish(out)
+              })
+            })
+          })
         })
       })
     }).catch(function (e) {
@@ -214,7 +277,9 @@
   }
 
   function finish (out) {
-    var txt = out.join('  ')
+    var failed = 0
+    out.forEach(function (l) { if (l.indexOf('PASS') !== 0) failed++ })
+    var txt = (failed ? ('FAILED ' + failed + ' | ') : 'ALL PASS | ') + out.join('  ')
     document.getElementById('log').textContent = txt
     document.title = txt
   }
