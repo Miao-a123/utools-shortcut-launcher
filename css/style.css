@@ -359,11 +359,8 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   font-size: 9.5px; line-height: 1; color: var(--text-3);
   min-width: 22px; text-align: center; user-select: none;
 }
-/* 无字模式下大文件夹的标题栏整个隐藏（JS 已不渲染，这里兜底） */
-.grid.hide-labels .tile .folder-head { display: none; }
-/* 无字模式下右上角的数量角标可点击打开完整视图 */
-.tile .folder-badge { cursor: pointer; }
-.tile .folder-badge:hover { filter: brightness(1.12); }
+/* 大文件夹的标题栏（名称 + 数量）常驻显示 —— 图标文字开关管的是图标名称，
+   文件夹自己的名字属于导航信息，两种模式下都要看得见（JS 里也是无条件渲染）。 */
 
 .inner-tile {
   position: relative;

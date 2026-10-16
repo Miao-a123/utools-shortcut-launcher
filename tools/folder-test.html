@@ -56,19 +56,12 @@
       var overflowY = W.getComputedStyle(inner).overflowY
       ok('内部不再滚动(分页)', overflowY === 'hidden', overflowY)
 
-      if (labels) {
-        ok('有字模式显示文件夹标题', !!tile.querySelector('.folder-head .folder-name'))
-        ok('有字模式无右上角角标', !tile.querySelector('.folder-badge'))
-      } else {
-        ok('无字模式隐藏标题栏', !tile.querySelector('.folder-head'))
-        var badge = tile.querySelector('.folder-badge')
-        ok('无字模式数量角标存在', !!badge, badge && badge.textContent)
-        if (badge) {
-          badge.click()
-          ok('点角标打开完整视图', !!D.querySelector('.fv-grid'))
-          closeModal()
-        }
-      }
+      // 标题栏（名称 + 数量）常驻：两种模式下都要有，且不再有右上角数量角标
+      ok('显示文件夹标题栏', !!tile.querySelector('.folder-head .folder-name'),
+        (tile.querySelector('.folder-head .folder-name') || {}).textContent)
+      ok('标题栏里带数量', !!tile.querySelector('.folder-head .folder-count'),
+        (tile.querySelector('.folder-head .folder-count') || {}).textContent)
+      ok('不再有右上角数量角标', !tile.querySelector('.folder-badge'))
 
       /* ---- 内部图标一律不显示名称（两种模式都是） ---- */
       ok('内部图标不渲染名称元素', !inner.querySelector('.inner-tile .label'))
@@ -133,8 +126,8 @@
         ok('向前翻页内容变化', inner.querySelector('.inner-tile').dataset.id !== lastId)
         ok('页码回退到倒数第二页', num.textContent === (total - 1) + '/' + total, num.textContent)
 
-        // 无字模式下翻页后角标 / 标题状态不回弹
-        if (!labels) ok('无字模式翻页后仍无标题栏', !tile.querySelector('.folder-head'))
+        // 无字模式下翻页后标题栏不能掉（它是常驻的导航信息）
+        if (!labels) ok('无字模式翻页后标题栏仍在', !!tile.querySelector('.folder-head .folder-name'))
       }
 
       /* ---- 点击大文件夹"任意空白处" = 打开文件夹 ----
@@ -169,7 +162,15 @@
         ok('点分页器不打开文件夹', true, '无分页器，跳过')
       }
 
-      // ④ 点内部图标 = 启动该项，不是打开文件夹（放最后：启动会触发重渲染）
+      // ④ 点标题栏也打开（标题栏常驻可见，是最自然的入口）
+      var head2 = tile.querySelector('.folder-head')
+      if (head2) {
+        head2.dispatchEvent(new W.MouseEvent('click', { bubbles: true }))
+        ok('点标题栏打开文件夹', KL.ui.modalCount === base + 1, 'modal=' + KL.ui.modalCount)
+        closeModal()
+      }
+
+      // ⑤ 点内部图标 = 启动该项，不是打开文件夹（放最后：启动会触发重渲染）
       var it = null
       Array.prototype.forEach.call(inner.querySelectorAll('.inner-tile'), function (t2) {
         var s2 = KL.store.getShortcut(t2.dataset.id)

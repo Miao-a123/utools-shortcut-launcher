@@ -111,12 +111,11 @@
               ok('shows-for-mini-folder', isShown() && tipText() === nameOf(mini), JSON.stringify(tipText()))
               leave(mini)
 
-              // ⑥ 大文件夹在无字模式下只剩右上角一个数量角标、名字无处可看 → 要弹
-              //   （有字模式下标题栏可见，那时不弹，见 ⑬2）
+              // ⑥ 大文件夹自己的标题栏是常驻显示的（不受无字模式影响）→ 不弹，
+              //   免得和标题栏重复显示同一个名字（有字模式同理，见 ⑬2）
               hover(big, 300, 300)
               return sleep(WAIT).then(function () {
-                ok('shows-for-big-folder-in-hide-labels', isShown() && tipText() === nameOf(big),
-                  JSON.stringify(tipText()) + ' vs ' + JSON.stringify(nameOf(big)))
+                ok('no-tip-for-big-folder-title', !isShown())
                 leave(big)
 
                 // ⑦ 大文件夹内部的图标标题被隐藏 → 要弹
@@ -176,7 +175,7 @@
                                       JSON.stringify(tipText()) + ' vs ' + JSON.stringify(nameOf(inner2)))
                                     leave(inner2)
 
-                                    // ⑬2 有字模式下大文件夹自己的标题栏看得见 → 不弹
+                                    // ⑬2 大文件夹的标题栏在两种模式下都常驻 → 都不弹
                                     var big2 = one('.grid > .tile.folder-big')
                                     hover(big2, 300, 300)
                                     return sleep(WAIT).then(function () {

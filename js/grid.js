@@ -428,8 +428,7 @@
     const scale = folderScale()
     const gap = Math.max(3, Math.round(4 * scale))
     const pad = 6
-    // 无字模式：标题栏整个不渲染（见 buildFolderTile）
-    const headH = store.settings.showLabels ? 20 : 0
+    const headH = 20     // 标题栏常驻（名称 + 数量），不受图标文字开关影响
     const innerW = Math.max(40, box.w - pad * 2)
     const innerH = Math.max(30, box.h - pad * 2 - headH)
     const iconMax = Math.max(26, Math.round(cell * scale))
@@ -561,28 +560,20 @@
       tile.classList.add('folder-big')
       tile.style.gridColumn = 'span ' + sc.col
       tile.style.gridRow = 'span ' + sc.row
-      if (store.settings.showLabels) {
-        const head = el('div', 'folder-head')
-        head.title = '点击查看全部图标'
-        const nameEl = el('span', 'folder-name')
-        nameEl.textContent = sc.name
-        head.appendChild(nameEl)
-        head.appendChild(el('span', 'folder-count', String(count)))
-        head.addEventListener('click', e => {
-          e.stopPropagation()
-          openFolderView(sc.id)
-        })
-        tile.appendChild(head)
-      } else {
-        // 无字模式：标题栏整个不渲染，数量缩成右上角小角标（点它仍能打开完整视图）
-        const badge = el('div', 'folder-badge', String(count))
-        badge.title = sc.name + '（点击查看全部图标）'
-        badge.addEventListener('click', e => {
-          e.stopPropagation()
-          openFolderView(sc.id)
-        })
-        tile.appendChild(badge)
-      }
+      // 标题栏（名称 + 数量）**常驻显示**，不受"显示/隐藏名称"开关影响：
+      // 那个开关管的是图标文字，而文件夹自己的名字是导航信息 ——
+      // 藏起来之后在无字模式下完全没法认这是哪个文件夹。
+      const head = el('div', 'folder-head')
+      head.title = '点击查看全部图标'
+      const nameEl = el('span', 'folder-name')
+      nameEl.textContent = sc.name
+      head.appendChild(nameEl)
+      head.appendChild(el('span', 'folder-count', String(count)))
+      head.addEventListener('click', e => {
+        e.stopPropagation()
+        openFolderView(sc.id)
+      })
+      tile.appendChild(head)
       if (sc.color) tile.style.background = sc.color
       const m = innerMetrics(sc)
       const inner = el('div', 'folder-inner')
@@ -602,7 +593,7 @@
         else if (e.deltaY < 0 && p > 0) { folderPage[sc.id] = p - 1; refreshFolderInner(sc) }
       }, { passive: false })
       if (pages > 1) tile.appendChild(buildFolderPager(sc, pages))
-      attachNameTip(tile, sc.name)   // 无字模式下悬浮文件夹空白处也能看到名称气泡
+      // 名称常驻可见，所以这里不挂名称气泡 —— 免得和标题栏重复显示同一个名字
     }
 
     if (selected.has(sc.id)) tile.classList.add('selected')
