@@ -415,11 +415,13 @@
   // 大文件夹内部的单元尺寸：图标档位给出图标尺寸上限，列数按文件夹可用宽度
   // 自适应——先按档位尺寸试排，右侧剩下的空白超过能多塞一列时自动缩一点图标
   // 把列数加满（下限 80% 档位值，避免为了填满把图标缩得认不出）。
-  // 放不下的内容不再滚动，由分页逻辑（folderPage / renderFolderPage）翻页浏览。
+  //
+  // 放不下的内容靠**按行吸附的滚轮滚动**浏览（见 attachInnerScroll）：
+  // 容器是 overflow:hidden，滚轮每次把 scrollTop 挪一整行，所以永远停在整行边界上，
+  // 不会像以前那样把一行图标裁掉半截；而且完全不占图标显示空间。
+  // 曾经用过一个悬浮在右下角的「‹ 1/2 ›」分页器，它在某些尺寸下会压到图标，已删除。
   //
   // 大文件夹内部**一律不显示图标名称**：名称改由光标气泡给出（见 attachNameTip）。
-  // 一是名称行本来就占掉了近 1/4 的高度，二是右下角的分页器会盖在名称上
-  // （"页数显示妨碍图标显示"就是这么来的），去掉名称行之后两件事一起解决。
   const INNER_CHROME = 8      // inner-tile 上下 padding 2px×2 + 边框 1px×2 + 行内 gap 2px
 
   function innerMetrics (folderSc) {
@@ -445,9 +447,8 @@
       if (ic >= iconMin && used > bestUsed) { bestUsed = used; cols = c; icon = ic }
     }
     const rowH = icon + INNER_CHROME
-    const rows = Math.max(1, Math.floor((innerH + gap) / (rowH + gap)))
     return {
-      cols: cols, icon: icon, unit: icon + INNER_CHROME, rowH: rowH, rows: rows,
+      cols: cols, icon: icon, unit: icon + INNER_CHROME, rowH: rowH,
       gap: gap, pad: pad, labelH: 0, headH: headH,
       innerW: innerW, innerH: innerH
     }
@@ -461,75 +462,46 @@
     return clamp(Math.round(Math.min(w, h)), 16, 220)
   }
 
-  /* ---------------- 大文件夹分页 ----------------
-     之前内部是 overflow-y:auto 的连续滚动：图标行滚到一半会被裁掉半截，
-     名称也跟着被切。改成整页翻动——每页 rows 行 × cols 列完整展示。 */
-  const folderPage = {}    // folderId → 当前页码（0 起）
+  /* ---------------- 大文件夹内部：渲染 + 按行滚动 ----------------
+     全部子项一次性渲染进 .folder-inner；放不下的部分靠滚动看。
+     容器是 overflow:hidden（不出现滚动条、不占宽度），滚轮每次把 scrollTop
+     挪**一整行**，所以永远停在整行边界上 —— 既不会把一行图标裁掉半截，
+     也不需要任何悬浮 UI 去指示"第几页"。 */
 
-  function folderPageCount (m, total) {
-    return Math.max(1, Math.ceil(total / (m.cols * m.rows)))
-  }
-
-  function renderFolderPage (sc, inner, m, kids) {
-    const pages = folderPageCount(m, kids.length)
-    let page = folderPage[sc.id] || 0
-    if (page >= pages) page = pages - 1
-    if (page < 0) page = 0
-    folderPage[sc.id] = page
+  function renderFolderInner (sc, inner, m, kids) {
     inner.innerHTML = ''
-    const show = kids.slice(page * m.cols * m.rows, (page + 1) * m.cols * m.rows)
-    for (const k of show) {
+    for (const k of kids) {
       const node = buildInnerTile(k, m, sc)
       inner.appendChild(node)
       tileNodes[k.id] = node
     }
-    return pages
   }
 
-  // 翻页后只重绘这个文件夹的内部，不整屏 render（页码状态在 folderPage 里，不会丢）
-  function refreshFolderInner (sc) {
-    const tile = tileNodes[sc.id]
-    if (!tile) return
-    const inner = tile.querySelector('.folder-inner')
-    if (!inner) return
-    const m = innerMetrics(sc)
-    const pages = renderFolderPage(sc, inner, m, store.childrenOf(sc.id))
-    const pager = tile.querySelector('.folder-pager')
-    if (pager && pager._update) pager._update(pages)
-  }
-
-  const PG_PREV_SVG = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>'
-  const PG_NEXT_SVG = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>'
-
-  function buildFolderPager (sc, pages) {
-    const pager = el('div', 'folder-pager')
-    const prev = el('button', 'pg-btn', PG_PREV_SVG)
-    const next = el('button', 'pg-btn', PG_NEXT_SVG)
-    const num = el('span', 'pg-num', '')
-    prev.title = '上一页'
-    next.title = '下一页'
-    pager.appendChild(prev)
-    pager.appendChild(num)
-    pager.appendChild(next)
-    const update = () => {
-      const p = folderPage[sc.id] || 0
-      num.textContent = (p + 1) + '/' + pages
-      prev.disabled = p <= 0
-      next.disabled = p >= pages - 1
-    }
-    prev.addEventListener('click', e => {
+  /* 内容超出容器高度时，用滚轮按行滚动；没有超出就不消费事件（交给外层页面滚）。
+     用"累积 delta"而不是"按时间节流"：鼠标滚轮一格 deltaY≈100+，一次就够一行；
+     触控板一次滑动会连发很多 deltaY≈1 的小事件，攒够一行才动 —— 两种设备都自然，
+     而且不依赖计时器（程序化派发事件也能得到确定的结果）。 */
+  function attachInnerScroll (inner, m) {
+    const step = m.rowH + m.gap
+    const MIN_STEP = 24
+    let acc = 0
+    inner.addEventListener('wheel', e => {
+      const maxTop = inner.scrollHeight - inner.clientHeight
+      if (maxTop <= 1) { acc = 0; return }          // 没超出 → 不拦，让页面自己滚
+      const dir = e.deltaY > 0 ? 1 : (e.deltaY < 0 ? -1 : 0)
+      if (!dir) return
+      // scrollTop 可能停在 maxTop（不一定是整行倍数），所以先按最近行取整
+      const cur = Math.round(inner.scrollTop / step)
+      const last = Math.ceil(maxTop / step)
+      const top = Math.min(clamp(cur + dir, 0, last) * step, maxTop)
+      if (top === inner.scrollTop) { acc = 0; return }   // 已经到顶 / 到底 → 放行给外层
+      e.preventDefault()
       e.stopPropagation()
-      const p = folderPage[sc.id] || 0
-      if (p > 0) { folderPage[sc.id] = p - 1; refreshFolderInner(sc) }
-    })
-    next.addEventListener('click', e => {
-      e.stopPropagation()
-      const p = folderPage[sc.id] || 0
-      if (p < pages - 1) { folderPage[sc.id] = p + 1; refreshFolderInner(sc) }
-    })
-    update()
-    pager._update = update
-    return pager
+      acc += e.deltaY
+      if (Math.abs(acc) < MIN_STEP) return               // 小步事件先攒着
+      acc = 0
+      inner.scrollTop = top
+    }, { passive: false })
   }
 
   function buildFolderTile (sc) {
@@ -556,7 +528,7 @@
       if (count) tile.appendChild(el('div', 'folder-badge', String(count)))
       attachNameTip(tile, sc.name)      // 小文件夹的标题同样会被无字模式隐藏
     } else {
-      // 大文件夹（m×n）：内部整页平铺，可直接点图标；放不下的翻页查看
+      // 大文件夹（m×n）：内部一次铺开，可直接点图标；放不下的用滚轮按行看
       tile.classList.add('folder-big')
       tile.style.gridColumn = 'span ' + sc.col
       tile.style.gridRow = 'span ' + sc.row
@@ -580,19 +552,10 @@
       inner.style.gridTemplateColumns = 'repeat(' + m.cols + ', ' + m.unit + 'px)'
       inner.style.gridAutoRows = m.rowH + 'px'
       inner.style.gap = m.gap + 'px'
-      const kids = store.childrenOf(sc.id)
-      const pages = renderFolderPage(sc, inner, m, kids)
+      renderFolderInner(sc, inner, m, store.childrenOf(sc.id))
       tile.appendChild(inner)
-      // 滚轮翻页（替换原来的连续滚动），滚到头再把事件放行给外层页面滚动
-      inner.addEventListener('wheel', e => {
-        if (pages <= 1) return
-        e.preventDefault()
-        e.stopPropagation()
-        const p = folderPage[sc.id] || 0
-        if (e.deltaY > 0 && p < pages - 1) { folderPage[sc.id] = p + 1; refreshFolderInner(sc) }
-        else if (e.deltaY < 0 && p > 0) { folderPage[sc.id] = p - 1; refreshFolderInner(sc) }
-      }, { passive: false })
-      if (pages > 1) tile.appendChild(buildFolderPager(sc, pages))
+      // 放不下的部分用滚轮按行看；没有任何悬浮控件，图标区一点都不被占
+      attachInnerScroll(inner, m)
       // 名称常驻可见，所以这里不挂名称气泡 —— 免得和标题栏重复显示同一个名字
     }
 
@@ -610,10 +573,10 @@
         openFolderView(sc.id)
         return
       }
-      // 大文件夹：内部的图标、标题栏、数量角标、分页按钮、右下角的拉伸手柄
-      // 各自都 stopPropagation 了，能走到这里的就是"空白处" —— 一律当作打开文件夹。
+      // 大文件夹：内部的图标、标题栏、拉伸手柄各自都 stopPropagation 了，
+      // 能走到这里的就是"空白处" —— 一律当作打开文件夹。
       const t = e.target
-      if (t && t.closest && (t.closest('.resize') || t.closest('.folder-pager'))) return
+      if (t && t.closest && t.closest('.resize')) return
       openFolderView(sc.id)
     })
     tile.addEventListener('contextmenu', e => {

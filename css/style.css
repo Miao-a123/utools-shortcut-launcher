@@ -335,29 +335,10 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
 .tile .folder-inner {
   display: grid; justify-content: start; align-content: start;
   flex: 1 1 auto; min-height: 0;
-  /* 连续滚动已改为整页翻动（folder-pager / 滚轮），不再出现图标被裁半截 */
+  /* overflow:hidden 既是"不出现滚动条、不占宽度"，也仍然是滚动容器 ——
+     滚轮通过 JS 改 scrollTop 按整行滚动（见 attachInnerScroll），
+     所以既不会把一行图标裁掉半截，也不需要分页器之类的悬浮控件去占图标区。 */
   overflow: hidden;
-}
-/* 大文件夹分页器：右下角悬浮，只有一页时不渲染 */
-.tile .folder-pager {
-  position: absolute; right: 5px; bottom: 5px; z-index: 3;
-  display: flex; align-items: center; gap: 2px;
-  background: var(--tile-bg, rgba(127,127,127,.12));
-  backdrop-filter: blur(4px);
-  border: 1px solid var(--border, rgba(127,127,127,.3));
-  border-radius: 9px; padding: 1px 3px;
-}
-.tile .folder-pager .pg-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; padding: 0;
-  border: none; border-radius: 6px; background: transparent;
-  color: var(--text-2); cursor: pointer;
-}
-.tile .folder-pager .pg-btn:hover { background: var(--hover); color: var(--text); }
-.tile .folder-pager .pg-btn:disabled { opacity: .3; cursor: default; background: transparent; }
-.tile .folder-pager .pg-num {
-  font-size: 9.5px; line-height: 1; color: var(--text-3);
-  min-width: 22px; text-align: center; user-select: none;
 }
 /* 大文件夹的标题栏（名称 + 数量）常驻显示 —— 图标文字开关管的是图标名称，
    文件夹自己的名字属于导航信息，两种模式下都要看得见（JS 里也是无条件渲染）。 */

@@ -54,7 +54,7 @@
       ok('图标尺寸合法(0<icon≤unit)', iconSize > 0 && iconSize <= mUnit, iconSize + '/' + mUnit)
 
       var overflowY = W.getComputedStyle(inner).overflowY
-      ok('内部不再滚动(分页)', overflowY === 'hidden', overflowY)
+      ok('内部不出现滚动条（overflow:hidden）', overflowY === 'hidden', overflowY)
 
       // 标题栏（名称 + 数量）常驻：两种模式下都要有，且不再有右上角数量角标
       ok('显示文件夹标题栏', !!tile.querySelector('.folder-head .folder-name'),
@@ -70,65 +70,95 @@
       // 行高以前是 unit + 22（名称行），现在不再为名称留位置
       ok('行高不再为名称留位置', rowH === mUnit, 'rowH=' + rowH + ' unit=' + mUnit)
 
-      /* ---- 分页：塞 40 个子项撑出多页 ---- */
+      /* ---- 内部一律不渲染分页器（它会在某些尺寸下压到图标，已彻底删除） ---- */
+      ok('不渲染分页器', !tile.querySelector('.folder-pager') && !D.querySelector('.folder-pager'))
+
+      // 塞 40 个子项撑到内容超出容器
       var kid0 = KL.store.childrenOf(folder.id)[0]
       for (var i = 0; i < 40; i++) {
         KL.store.shortcuts.push(Object.assign({}, kid0, { id: 'tk' + (Date.now()) + '_' + i, name: '测试项 ' + i }))
       }
+      var kidTotal = KL.store.childrenOf(folder.id).length
       KL.grid.render()
       tile = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
       inner = tile.querySelector('.folder-inner')
-      var pager = tile.querySelector('.folder-pager')
-      ok('多页时出现分页器', !!pager)
-      if (pager) {
-        var num = pager.querySelector('.pg-num')
-        var btns = pager.querySelectorAll('.pg-btn')
-        var prev = btns[0], next = btns[1]
-        ok('页码 1/N', /^1\/\d+$/.test(num.textContent), num.textContent)
-        ok('第一页 prev 禁用', prev.disabled)
-        var perPage = inner.querySelectorAll('.inner-tile').length
-        ok('每页图标数 ≤ cols×rows', perPage > 0, perPage)
+      rowH = parseInt(inner.style.gridAutoRows, 10)
+      var mGap = parseInt(inner.style.gap, 10)
+      ok('仍然不渲染分页器', !tile.querySelector('.folder-pager'))
+      ok('所有子项都已渲染（不再按页切片）',
+        inner.querySelectorAll('.inner-tile').length === kidTotal,
+        inner.querySelectorAll('.inner-tile').length + '/' + kidTotal)
 
-        /* 分页器是 absolute 悬浮的，绝不能压住任何图标 —— 这就是
-           "页数显示妨碍图标显示" 的回归点，所以按像素矩形逐个比。 */
-        var pr = pager.getBoundingClientRect()
-        var worst = 0, worstId = ''
-        Array.prototype.forEach.call(inner.querySelectorAll('.inner-tile'), function (t2) {
-          var ib = t2.querySelector('.icon-box') || t2
-          var r = ib.getBoundingClientRect()
-          var ox = Math.min(r.right, pr.right) - Math.max(r.left, pr.left)
-          var oy = Math.min(r.bottom, pr.bottom) - Math.max(r.top, pr.top)
-          var area = (ox > 0 && oy > 0) ? ox * oy : 0
-          if (area > worst) { worst = area; worstId = t2.dataset.id }
-        })
-        ok('分页器不压住任何图标', worst === 0,
-          '最大重叠=' + Math.round(worst) + 'px²' + (worstId ? ' @' + worstId : ''))
+      var step = rowH + mGap
+      var maxTop = inner.scrollHeight - inner.clientHeight
+      ok('内容超出容器（需要滚动）', maxTop > step, 'maxTop=' + maxTop + ' step=' + step)
 
-        var firstId0 = inner.querySelector('.inner-tile').dataset.id
-        next.click()
-        var firstId1 = inner.querySelector('.inner-tile').dataset.id
-        ok('翻页后内容变化', firstId0 !== firstId1, firstId0 + '->' + firstId1)
-        ok('页码变为 2/N', /^2\/\d+$/.test(num.textContent), num.textContent)
-        ok('第二页 prev 可用', !prev.disabled)
-
-        // 滚轮向下 → 翻页且事件被消费（不冒泡给外层）
-        var ev = new W.WheelEvent('wheel', { deltaY: 120, cancelable: true })
+      function wheel (dy) {
+        var ev = new W.WheelEvent('wheel', { deltaY: dy, cancelable: true, bubbles: true })
         inner.dispatchEvent(ev)
-        ok('滚轮向下翻页', /^3\/\d+$/.test(num.textContent), num.textContent + ' defaultPrevented=' + ev.defaultPrevented)
-
-        // 连续翻到最后一页
-        var guard = 0
-        while (!next.disabled && guard++ < 30) next.click()
-        ok('最后一页 next 禁用', next.disabled, num.textContent)
-        var total = parseInt(num.textContent.split('/')[1], 10)
-        var lastId = inner.querySelector('.inner-tile').dataset.id
-        prev.click()
-        ok('向前翻页内容变化', inner.querySelector('.inner-tile').dataset.id !== lastId)
-        ok('页码回退到倒数第二页', num.textContent === (total - 1) + '/' + total, num.textContent)
-
-        // 无字模式下翻页后标题栏不能掉（它是常驻的导航信息）
-        if (!labels) ok('无字模式翻页后标题栏仍在', !!tile.querySelector('.folder-head .folder-name'))
+        return ev
       }
+      /* 按行吸附的核心保证：只会"最底下那一行"露一半（那正好也是"下面还有"的提示），
+         绝不会出现上面某一行被裁 —— 也就是不会停在半行的位置上。 */
+      function partialRows () {
+        var ir = inner.getBoundingClientRect()
+        var cutTop = 0
+        var cutBottom = 0
+        Array.prototype.forEach.call(inner.querySelectorAll('.inner-tile'), function (t2) {
+          var r = t2.getBoundingClientRect()
+          var vis = Math.min(r.bottom, ir.bottom) - Math.max(r.top, ir.top)
+          if (vis <= 1 || vis >= r.height - 1) return
+          if (r.top < ir.top - 1) cutTop++
+          else cutBottom++
+        })
+        return { cutTop: cutTop, cutBottom: cutBottom }
+      }
+      function noTopClip (label) {
+        var p = partialRows()
+        ok(label, p.cutTop === 0 && p.cutBottom <= mCols, 'cutTop=' + p.cutTop + ' cutBottom=' + p.cutBottom)
+        return p
+      }
+
+      ok('初始停在顶部', inner.scrollTop === 0, String(inner.scrollTop))
+      noTopClip('初始只有最底下那行露一半')
+
+      var ev1 = wheel(120)
+      ok('滚轮向下滚一整行', inner.scrollTop === step && ev1.defaultPrevented,
+        'scrollTop=' + inner.scrollTop + ' step=' + step + ' prevented=' + ev1.defaultPrevented)
+      noTopClip('滚动后依然只有最底下那行露一半')
+
+      var evBack = wheel(-120)
+      ok('滚轮向上滚回顶部', inner.scrollTop === 0, String(inner.scrollTop))
+      ok('顶部再向上滚 → 放行给外层', (function () {
+        var e2 = wheel(-120)
+        return e2.defaultPrevented === false
+      })())
+
+      // 一路滚到底
+      var guard = 0
+      while (guard++ < 100) {
+        var e3 = wheel(120)
+        if (inner.scrollTop >= maxTop - 0.5) break
+        if (!e3.defaultPrevented) break
+      }
+      ok('能滚到底', inner.scrollTop >= maxTop - 0.5, inner.scrollTop + '/' + maxTop)
+      // 滚到底时底部要贴齐（不能有内容看不见），此时最上面那行可能只露一半 ——
+      // 因为内容总高不是容器高的整数倍，只能二选一：要么底部对齐留半行在顶上，
+      // 要么停在整行边界导致最后一行永远看不全。选前者。
+      var atEnd = partialRows()
+      ok('到底后底部贴齐、最多只有最上面那行露一半',
+        atEnd.cutBottom === 0 && atEnd.cutTop <= mCols,
+        'cutTop=' + atEnd.cutTop + ' cutBottom=' + atEnd.cutBottom)
+      var evEnd = wheel(120)
+      ok('到底后再向下滚 → 放行给外层', evEnd.defaultPrevented === false)
+
+      // 滚轮只按整行走：中途停住时 scrollTop 一定是整行倍数（除了到底被 maxTop 截断）
+      wheel(-120)
+      ok('往上一行落在整行边界', inner.scrollTop % step === 0 || inner.scrollTop >= maxTop - 0.5,
+        'scrollTop=' + inner.scrollTop + ' %=' + (inner.scrollTop % step))
+
+      // 无字模式下滚动后标题栏不能掉（它是常驻的导航信息）
+      if (!labels) ok('无字模式滚动后标题栏仍在', !!tile.querySelector('.folder-head .folder-name'))
 
       /* ---- 点击大文件夹"任意空白处" = 打开文件夹 ----
          用 modalCount 判断（同步增减），别用 .fv-grid 是否存在 ——
@@ -153,16 +183,7 @@
       ok('点内部空隙也打开视图', KL.ui.modalCount === base + 1, 'modal=' + KL.ui.modalCount)
       closeModal()
 
-      // ③ 点分页器本身不打开
-      var pg = tile.querySelector('.folder-pager')
-      if (pg) {
-        pg.dispatchEvent(new W.MouseEvent('click', { bubbles: true }))
-        ok('点分页器不打开文件夹', KL.ui.modalCount === base, 'modal=' + KL.ui.modalCount)
-      } else {
-        ok('点分页器不打开文件夹', true, '无分页器，跳过')
-      }
-
-      // ④ 点标题栏也打开（标题栏常驻可见，是最自然的入口）
+      // ③ 点标题栏也打开（标题栏常驻可见，是最自然的入口）
       var head2 = tile.querySelector('.folder-head')
       if (head2) {
         head2.dispatchEvent(new W.MouseEvent('click', { bubbles: true }))
@@ -170,7 +191,7 @@
         closeModal()
       }
 
-      // ⑤ 点内部图标 = 启动该项，不是打开文件夹（放最后：启动会触发重渲染）
+      // ④ 点内部图标 = 启动该项，不是打开文件夹（放最后：启动会触发重渲染）
       var it = null
       Array.prototype.forEach.call(inner.querySelectorAll('.inner-tile'), function (t2) {
         var s2 = KL.store.getShortcut(t2.dataset.id)
@@ -180,6 +201,21 @@
         try { it.dispatchEvent(new W.MouseEvent('click', { bubbles: true })) } catch (e2) {}
         ok('点内部图标不打开文件夹', KL.ui.modalCount === base, 'modal=' + KL.ui.modalCount)
       }
+
+      /* ---- 内容没超出容器时，滚轮不能拦（要让外层页面照常滚） ---- */
+      KL.store.batch(function () {
+        KL.store.childrenOf(folder.id).slice(4).forEach(function (k) { KL.store.removeShortcut(k.id) })
+      })
+      var tile4 = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
+      var inner4 = tile4.querySelector('.folder-inner')
+      var fit = inner4.scrollHeight - inner4.clientHeight <= 1
+      var evFit = new W.WheelEvent('wheel', { deltaY: 120, cancelable: true, bubbles: true })
+      inner4.dispatchEvent(evFit)
+      ok('内容不超出时不消费滚轮',
+        fit && evFit.defaultPrevented === false,
+        'fits=' + fit + ' scrollH=' + inner4.scrollHeight + ' clientH=' + inner4.clientHeight +
+        ' prevented=' + evFit.defaultPrevented)
+      ok('收尾时也没有分页器', !D.querySelector('.folder-pager'))
     } catch (e) {
       out.push('ERROR:' + (e && e.message))
     }
