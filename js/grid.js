@@ -57,6 +57,11 @@
   const GRID_GAP = 10
   const LABEL_GAP = 4      // 名称与格子下沿之间的距离
   const LABEL_BOX = 29     // 名称占的高度（11.5px × 1.25 × 2 行 ≈ 29）
+  /* 图标占格子边长的比例。主网格和大文件夹内部**共用同一个值** ——
+     以前内部格子是「图标 + 8px 内衬」挤出来的，图标占了格子将近 9 成，
+     格子紧紧箍住图标（内部格子加了描边之后特别明显）。现在两边都按 72% 算，
+     内部格子就是主格子的等比缩小版。 */
+  const ICON_RATIO = 0.72
 
   /* 名称画在**格子外面**（见 css 的 .tile .label），所以有字模式下每一行之间
      要多留出「名称 + 一点间隔」的高度，否则下一行的图标会压到名称上。
@@ -502,13 +507,16 @@
     }
   }
 
+  /* 内部图标的尺寸。格子边长（含跨格）乘 ICON_RATIO —— 和主网格的 iconSizeFor
+     用同一个比例，所以里面的图标和格子的关系看起来跟外面一模一样，不会出现
+     "格子箍着图标"的失衡感。 */
   function innerIconSize (sc, m) {
     if (m.list) return m.icon          // 列表模式所有行同一个图标尺寸
     const c = sc.col || 1
     const r = sc.row || 1
-    const w = m.unit * c + m.gap * (c - 1) - INNER_CHROME
-    const h = m.rowH * r + m.gap * (r - 1) - INNER_CHROME - m.labelH
-    return clamp(Math.round(Math.min(w, h)), 16, 220)
+    const w = m.unit * c + m.gap * (c - 1)          // 格子边长（不先扣内衬）
+    const h = m.rowH * r + m.gap * (r - 1)
+    return clamp(Math.round(Math.min(w, h) * ICON_RATIO), 16, 220)
   }
 
   /* ---------------- 大文件夹内部：分页 + 翻页 ----------------
@@ -943,7 +951,7 @@
   function iconSizeFor (sc) {
     const box = tilePixelBox(sc)
     const base = Math.min(box.w, box.h)
-    return clamp(Math.round(base * 0.72), 22, 168)
+    return clamp(Math.round(base * ICON_RATIO), 22, 168)
   }
 
   /* ---------------- rendering ---------------- */

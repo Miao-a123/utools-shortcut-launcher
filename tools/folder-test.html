@@ -27,6 +27,7 @@
       var W = frame.contentWindow, D = frame.contentDocument, KL = W.KL
       if (!KL || !KL.grid || !KL.store) { out.push('ERROR:KL 未加载'); return finish(out) }
       var labels = Q.get('labels') !== '0'
+      var ICON_RATIO_TEST = 0.72   // 和 js/grid.js 里的 ICON_RATIO 保持一致
 
       var folder = null
       KL.store.shortcuts.forEach(function (s) {
@@ -360,6 +361,42 @@
         ok('小文件夹菜单里没有「内部显示方式」', (D.body.textContent || '').indexOf('内部显示方式') < 0)
         KL.ui.closeMenu()
       }
+
+      /* ---- 内部图标与格子的比例：必须和主网格一致（72%）----
+         以前内部格子是「图标 + 8px 内衬」挤出来的，图标占了格子近 9 成，
+         格子紧紧箍着图标（加了描边之后特别明显）。 */
+      var savedFolderScale = KL.store.settings.folderIconSize
+      KL.store.updateShortcut(folder.id, { folderView: 'grid' })
+      KL.store.setSetting('folderIconSize', savedFolderScale)
+      var tR = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
+      var iR = tR.querySelector('.folder-inner')
+      var unitR = parseInt(/repeat\(\d+,\s*(\d+)px\)/.exec(iR.style.gridTemplateColumns)[1], 10)
+      var iconR = parseInt(iR.querySelector('.inner-tile').style.getPropertyValue('--icon-size'), 10)
+      // 拿一个 1×1 的普通图标做基准（2×2 的 tile 图标会更大，不能直接比）
+      var mtR = null
+      Array.prototype.forEach.call(D.querySelectorAll('.grid > .tile:not(.folder)'), function (t2) {
+        if (mtR) return
+        if (String(t2.style.gridRow).indexOf('span 1') === 0 &&
+            String(t2.style.gridColumn).indexOf('span 1') === 0) mtR = t2
+      })
+      var mainIcon = parseInt(mtR.style.getPropertyValue('--icon-size'), 10)
+      var cellR = KL.grid.gridMetrics().cell
+      ok('主网格图标与格子是 72%', Math.abs(mainIcon / cellR - ICON_RATIO_TEST) <= 0.02,
+        Math.round(mainIcon / cellR * 100) + '% (' + mainIcon + '/' + cellR + ')')
+      ok('内部图标与格子的比例也是 72%', Math.abs(iconR / unitR - ICON_RATIO_TEST) <= 0.02,
+        Math.round(iconR / unitR * 100) + '% (' + iconR + '/' + unitR + ')')
+      ok('内部图标没有被格子箍满（留出内边距）', iconR / unitR < 0.8,
+        Math.round(iconR / unitR * 100) + '%')
+
+      // 「与主格一致」时，内外的格子和图标应该完全一样
+      KL.store.setSetting('folderIconSize', 'same')
+      var tS = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
+      var iS = tS.querySelector('.folder-inner')
+      var unitS = parseInt(/repeat\(\d+,\s*(\d+)px\)/.exec(iS.style.gridTemplateColumns)[1], 10)
+      var iconS = parseInt(iS.querySelector('.inner-tile').style.getPropertyValue('--icon-size'), 10)
+      ok('「与主格一致」时内部格子 = 主网格格子', unitS === cellR, unitS + ' vs ' + cellR)
+      ok('「与主格一致」时内部图标 = 主网格图标', iconS === mainIcon, iconS + ' vs ' + mainIcon)
+      KL.store.setSetting('folderIconSize', savedFolderScale)
     } catch (e) {
       out.push('ERROR:' + (e && e.message))
     }
