@@ -379,7 +379,11 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   position: relative;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 2px; padding: 2px;
-  border-radius: 8px; border: 1px solid transparent;
+  /* 和主网格的格子用同一套设置项（图标格子背景 / 描边 / 圆角），
+     默认值都是透明的，所以不改设置时看不出差别 */
+  border-radius: var(--tile-radius);
+  border: var(--tile-border-w, 1px) solid var(--tile-border-color, transparent);
+  background: var(--tile-bg, transparent);
   cursor: pointer; overflow: hidden;
 }
 .inner-tile:hover { background: var(--hover); border-color: var(--border); }
@@ -397,8 +401,25 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
 }
 .inner-tile img.icon { width: 100%; height: 100%; object-fit: contain; -webkit-user-drag: none; }
-/* 大文件夹内部一律不显示图标名称（JS 已不再渲染 .label），
-   名称改由光标气泡给出 —— 见 grid.js 的 attachNameTip / innerMetrics */
+
+/* 大文件夹的「列表显示」：一行一个，图标贴左、名称在右（名称常驻，不受开关影响） */
+.inner-tile.list-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 4px 6px;
+  width: 100%;
+}
+.inner-tile .inner-name {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 11.5px; line-height: 1.3;
+  text-align: left;
+  color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 大文件夹内部网格模式下不渲染名称（网格模式） */
 .inner-tile .resize {
   position: absolute; right: 1px; bottom: 1px; width: 10px; height: 10px;
   opacity: 0; cursor: nwse-resize; color: var(--text-3);

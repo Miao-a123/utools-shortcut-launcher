@@ -439,6 +439,11 @@
   // 自适应——先按档位尺寸试排，右侧剩下的空白超过能多塞一列时自动缩一点图标
   // 把列数加满（下限 80% 档位值，避免为了填满把图标缩得认不出）。
   //
+  // 两种显示方式（每个文件夹用 folderView 单独设置，见 showFolderMenu）：
+  //   · 'grid'（默认）：小图标平铺成多列；
+  //   · 'list'：一行一个，图标缩到 55% 贴在左边、名称写在右边 —— 适合文件夹里
+  //     装的是文档。列表行高由缩放后的图标决定，所以比网格行矮，一页能放更多。
+  //
   // 内容超出时**整页翻动**（`rows` 行 × `cols` 列一页，见 renderFolderPage）：
   // 只渲染整行，所以永远不会出现"某一行被裁掉半截"。翻页只用滚轮，**不做任何
   // 页标 / 页码 UI** —— 悬浮在图标区上的控件一定会占地方，曾经那版「‹ 1/2 ›」
@@ -447,8 +452,11 @@
   // 文件夹的标题不在这里，它和图标名称一样画在**格子下方**（见 folderLabel），
   // 所以 headH 恒为 0 —— 内部空间一点不被标题占。
   //
-  // 内部图标**一律不显示图标名称**：名称靠光标气泡（attachNameTip(…, true)）。
+  // 网格模式下内部图标**不显示名称**：名称靠光标气泡（attachNameTip(…, true)）；
+  // 列表模式下名称就写在行里，所以不挂气泡。
   const INNER_CHROME = 8      // inner-tile 上下 padding 2px×2 + 边框 1px×2 + 行内 gap 2px
+  const LIST_ICON_RATIO = 0.55   // 列表模式下图标相对网格图标的比例
+  const LIST_CHROME = 10      // 列表行：上下 padding 4px×2 + 边框 1px×2
 
   function innerMetrics (folderSc) {
     const cell = currentCell()
@@ -460,6 +468,19 @@
     const innerW = Math.max(40, box.w - pad * 2)
     const innerH = Math.max(30, box.h - pad * 2 - headH)
     const iconMax = Math.max(26, Math.round(cell * scale))
+
+    // 列表模式：单列，行高由缩小后的图标决定
+    if (folderSc.folderView === 'list') {
+      const listIcon = clamp(Math.round(iconMax * LIST_ICON_RATIO), 18, 96)
+      const rowH = listIcon + LIST_CHROME
+      const rows = Math.max(1, Math.floor((innerH + gap) / (rowH + gap)))
+      return {
+        list: true, cols: 1, icon: listIcon, unit: innerW, rowH: rowH, rows: rows,
+        gap: gap, pad: pad, labelH: 0, headH: headH,
+        innerW: innerW, innerH: innerH
+      }
+    }
+
     // 横向自适应：在「图标 ≥ 80% 档位值」的候选列数里，选占宽最大的那个
     const iconMin = Math.max(20, Math.round(iconMax * 0.8))
     let cols = 1
@@ -482,6 +503,7 @@
   }
 
   function innerIconSize (sc, m) {
+    if (m.list) return m.icon          // 列表模式所有行同一个图标尺寸
     const c = sc.col || 1
     const r = sc.row || 1
     const w = m.unit * c + m.gap * (c - 1) - INNER_CHROME
@@ -578,9 +600,10 @@
       if (sc.color) tile.style.background = sc.color
       const m = innerMetrics(sc)
       const inner = el('div', 'folder-inner')
-      inner.style.gridTemplateColumns = 'repeat(' + m.cols + ', ' + m.unit + 'px)'
+      inner.style.gridTemplateColumns = m.list ? '1fr' : 'repeat(' + m.cols + ', ' + m.unit + 'px)'
       inner.style.gridAutoRows = m.rowH + 'px'
       inner.style.gap = m.gap + 'px'
+      if (m.list) tile.classList.add('folder-list')
       const pages = renderFolderPage(sc, inner, m, store.childrenOf(sc.id))
       tile.appendChild(inner)
       attachFolderPaging(inner, sc, pages)
@@ -670,8 +693,15 @@
     const tile = el('div', 'inner-tile')
     tile.dataset.id = sc.id
     tile.draggable = true
-    tile.style.gridColumn = 'span ' + (sc.col || 1)
-    tile.style.gridRow = 'span ' + (sc.row || 1)
+    if (m.list) {
+      // 列表模式：一行一个，忽略子项自己的 col/row
+      tile.classList.add('list-row')
+      tile.style.gridColumn = 'span 1'
+      tile.style.gridRow = 'span 1'
+    } else {
+      tile.style.gridColumn = 'span ' + (sc.col || 1)
+      tile.style.gridRow = 'span ' + (sc.row || 1)
+    }
     tile.style.setProperty('--icon-size', innerIconSize(sc, m) + 'px')
     if (selected.has(sc.id)) tile.classList.add('selected')
 
@@ -682,10 +712,17 @@
     img.alt = ''
     box.appendChild(img)
     tile.appendChild(box)
-    // 大文件夹内部不渲染名称（见 innerMetrics 上的说明）——名称只靠光标气泡，
-    // 所以这里第三个参数传 true，不受"显示/隐藏名称"开关影响。
+    if (m.list) {
+      // 列表模式的核心就是把名称写出来（同样不受「显示/隐藏名称」开关影响）
+      const nameEl = el('div', 'inner-name')
+      nameEl.textContent = sc.name
+      nameEl.title = sc.name
+      tile.appendChild(nameEl)
+    }
     if (sc.missing) tile.appendChild(el('div', 'badge'))
-    attachNameTip(tile, sc.name, true)
+    // 网格模式下内部不渲染名称 → 名称靠光标气泡（第三个参数 true = 不受开关影响）。
+    // 列表模式下名称已经在行里，再弹气泡就是重复。
+    if (!m.list) attachNameTip(tile, sc.name, true)
 
     tile.addEventListener('click', e => {
       e.stopPropagation()
@@ -842,6 +879,8 @@
     const ids = Array.from(selected)
     const multi = ids.length > 1
     const count = store.childCount(sc.id)
+    const isBig = sc.col * sc.row > 1
+    const view = sc.folderView === 'list' ? 'list' : 'grid'
     KL.ui.menu([
       { label: '打开文件夹', disabled: multi, onClick: () => KL.dialogs.folderView(sc.id) },
       { separator: true },
@@ -864,6 +903,11 @@
         hint: (sc.col === p[0] && sc.row === p[1]) ? '✓' : '',
         onClick: () => { store.updateShortcut(sc.id, { col: p[0], row: p[1] }); render() }
       })) },
+      // 1×1 的小文件夹不展示内部，这个开关没有意义，就不给出来
+      ...(isBig ? [{ label: '内部显示方式', items: [
+        { label: '图标', hint: view === 'grid' ? '✓' : '', onClick: () => { store.updateShortcut(sc.id, { folderView: 'grid' }); render() } },
+        { label: '列表（图标 + 名称）', hint: view === 'list' ? '✓' : '', onClick: () => { store.updateShortcut(sc.id, { folderView: 'list' }); render() } }
+      ] }] : []),
       { separator: true },
       {
         label: '解散文件夹（' + count + ' 项移出）',

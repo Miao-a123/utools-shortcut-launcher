@@ -91,6 +91,58 @@
       // 行高以前是 unit + 22（名称行），现在不再为名称留位置
       ok('行高不再为名称留位置', rowH === mUnit, 'rowH=' + rowH + ' unit=' + mUnit)
 
+      /* ---- 内部格子的外观跟主网格同一套设置项 ---- */
+      var savedStyle = {
+        tileBgColor: KL.store.settings.tileBgColor,
+        tileBgOpacity: KL.store.settings.tileBgOpacity,
+        tileBorderColor: KL.store.settings.tileBorderColor,
+        tileBorderWidth: KL.store.settings.tileBorderWidth,
+        tileRadius: KL.store.settings.tileRadius
+      }
+      KL.store.setSetting('tileBgColor', '#ff8800')
+      KL.store.setSetting('tileBgOpacity', 100)
+      KL.store.setSetting('tileBorderColor', '#22ff44')
+      KL.store.setSetting('tileBorderWidth', 3)
+      KL.store.setSetting('tileRadius', 20)
+      // 这几项在真实使用里由设置面板直接把 CSS 变量写到 :root 上（见 dialogs.js）；
+      // setSetting 本身不会更新变量，所以这里补一次 applyVars。
+      KL.app.applyVars()
+      // setSetting 会触发重渲染，旧的 tile 引用会变成游离节点（getComputedStyle 读出来是空串）
+      // —— 所以这里必须重新查询
+      var innerCell = D.querySelector('.tile.folder-big .inner-tile')
+      var mainCell = D.querySelector('.grid > .tile:not(.folder)')
+      var ci = W.getComputedStyle(innerCell)
+      var cm = W.getComputedStyle(mainCell)
+      ok('内部格子与主网格同一圆角', ci.borderTopLeftRadius === cm.borderTopLeftRadius,
+        ci.borderTopLeftRadius + ' vs ' + cm.borderTopLeftRadius)
+      ok('内部格子与主网格同一描边宽度', ci.borderTopWidth === cm.borderTopWidth,
+        ci.borderTopWidth + ' vs ' + cm.borderTopWidth)
+      ok('内部格子与主网格同一描边颜色', ci.borderTopColor === cm.borderTopColor,
+        ci.borderTopColor + ' vs ' + cm.borderTopColor)
+      ok('内部格子与主网格同一背景色', ci.backgroundColor === cm.backgroundColor,
+        ci.backgroundColor + ' vs ' + cm.backgroundColor)
+      // 真值检查：确认设置真的生效了（不是两边都透明）
+      ok('内部格子真的用上了设置的背景', ci.backgroundColor === 'rgb(255, 136, 0)',
+        ci.backgroundColor)
+      ok('内部格子真的用上了设置的描边',
+        ci.borderTopWidth === '3px' && ci.borderTopColor === 'rgb(34, 255, 68)',
+        ci.borderTopWidth + ' / ' + ci.borderTopColor)
+      ok('内部格子真的用上了设置的圆角', ci.borderTopLeftRadius === '20px', ci.borderTopLeftRadius)
+
+      // 还原，免得影响后面的断言和截图
+      KL.store.setSetting('tileBgColor', savedStyle.tileBgColor)
+      KL.store.setSetting('tileBgOpacity', savedStyle.tileBgOpacity)
+      KL.store.setSetting('tileBorderColor', savedStyle.tileBorderColor)
+      KL.store.setSetting('tileBorderWidth', savedStyle.tileBorderWidth)
+      KL.store.setSetting('tileRadius', savedStyle.tileRadius)
+      KL.app.applyVars()
+      var innerCell2 = D.querySelector('.tile.folder-big .inner-tile')
+      var mainCell2 = D.querySelector('.grid > .tile:not(.folder)')
+      ok('还原后内部格子与主网格依然一致',
+        W.getComputedStyle(innerCell2).borderTopWidth === W.getComputedStyle(mainCell2).borderTopWidth &&
+        W.getComputedStyle(innerCell2).backgroundColor === W.getComputedStyle(mainCell2).backgroundColor,
+        W.getComputedStyle(innerCell2).borderTopWidth + ' / ' + W.getComputedStyle(innerCell2).backgroundColor)
+
       // 塞 40 个子项撑出多页
       var kid0 = KL.store.childrenOf(folder.id)[0]
       for (var i = 0; i < 40; i++) {
@@ -186,6 +238,52 @@
           fl3 ? W.getComputedStyle(fl3).display : '无 label')
       }
 
+      /* ---- 每个文件夹的「内部显示方式」：列表 ---- */
+      var gridRowH = parseInt(inner.style.gridAutoRows, 10)
+      var firstName = KL.store.childrenOf(folder.id)[0].name
+
+      KL.store.updateShortcut(folder.id, { folderView: 'list' })
+      KL.grid.render()
+      tile = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
+      inner = tile.querySelector('.folder-inner')
+      var row0 = inner.querySelector('.inner-tile')
+      var listRowH = parseInt(inner.style.gridAutoRows, 10)
+      var listCount = inner.querySelectorAll('.inner-tile').length
+      var nameEl = row0 ? row0.querySelector('.inner-name') : null
+
+      ok('列表模式：内部单列', inner.style.gridTemplateColumns === '1fr', inner.style.gridTemplateColumns)
+      ok('列表模式：文件夹带 folder-list 标记', tile.classList.contains('folder-list'), tile.className)
+      ok('列表模式：内部项打上 list-row', !!row0 && row0.classList.contains('list-row'),
+        row0 ? row0.className : '无')
+      ok('列表模式：每行显示名称', !!nameEl && nameEl.textContent === firstName,
+        nameEl ? nameEl.textContent : '无')
+      ok('列表模式：行高比网格行矮（图标缩到 55%）', listRowH < gridRowH, listRowH + ' < ' + gridRowH)
+      ok('列表模式：一页有内容', listCount > 0, String(listCount))
+      if (row0) {
+        var rr = row0.getBoundingClientRect()
+        var icr = row0.querySelector('.icon-box').getBoundingClientRect()
+        var nrr = nameEl.getBoundingClientRect()
+        ok('列表模式：图标贴左边', icr.left - rr.left <= 10, Math.round(icr.left - rr.left))
+        ok('列表模式：名称在图标右侧', nrr.left >= icr.right - 2,
+          Math.round(nrr.left) + ' vs ' + Math.round(icr.right))
+        ok('列表模式：名称在行内部', nrr.right <= rr.right + 1 && nrr.top >= rr.top - 1,
+          'name ' + Math.round(nrr.left) + '..' + Math.round(nrr.right) +
+          ' row ' + Math.round(rr.left) + '..' + Math.round(rr.right))
+        ok('列表模式：行铺满内部宽度', rr.width >= inner.getBoundingClientRect().width - 2,
+          Math.round(rr.width) + ' vs ' + Math.round(inner.getBoundingClientRect().width))
+      }
+
+      // 切回图标模式
+      KL.store.updateShortcut(folder.id, { folderView: 'grid' })
+      KL.grid.render()
+      tile = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
+      inner = tile.querySelector('.folder-inner')
+      ok('切回图标模式：列模板恢复', /^repeat\(/.test(inner.style.gridTemplateColumns),
+        inner.style.gridTemplateColumns)
+      ok('切回图标模式：不再有 list-row', !inner.querySelector('.list-row'))
+      ok('切回图标模式：行高恢复', parseInt(inner.style.gridAutoRows, 10) === gridRowH,
+        inner.style.gridAutoRows)
+
       /* ---- 点击大文件夹"任意空白处" = 打开文件夹 ----
          用 modalCount 判断（同步增减），别用 .fv-grid 是否存在 ——
          关闭时有 120ms 的退场动画，DOM 还在。 */
@@ -244,6 +342,24 @@
         shown4 === kids4 && evFit.defaultPrevented === false,
         'shown=' + shown4 + '/' + kids4 + ' prevented=' + evFit.defaultPrevented)
       ok('收尾时也没有分页器', !D.querySelector('.folder-pager'))
+
+      /* ---- 右键菜单里有「内部显示方式」 ---- */
+      var bigTile = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
+      bigTile.dispatchEvent(new W.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }))
+      var menuTxt = D.body.textContent || ''
+      ok('大文件夹右键菜单有「内部显示方式」', menuTxt.indexOf('内部显示方式') >= 0)
+      ok('菜单里有「列表」选项', menuTxt.indexOf('列表（图标 + 名称）') >= 0)
+      KL.ui.closeMenu()
+      ok('菜单已关闭', !D.querySelector('.ctx.show'))
+
+      var mini = null
+      KL.store.shortcuts.forEach(function (s2) { if (!mini && s2.kind === 'folder' && s2.col * s2.row <= 1) mini = s2 })
+      if (mini) {
+        var miniTile = D.querySelector('.tile[data-id="' + mini.id + '"]')
+        miniTile.dispatchEvent(new W.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }))
+        ok('小文件夹菜单里没有「内部显示方式」', (D.body.textContent || '').indexOf('内部显示方式') < 0)
+        KL.ui.closeMenu()
+      }
     } catch (e) {
       out.push('ERROR:' + (e && e.message))
     }
