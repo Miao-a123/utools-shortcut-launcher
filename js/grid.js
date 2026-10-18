@@ -419,7 +419,12 @@
   /* ---------------- folders ---------------- */
 
   // 文件夹内图标大小档位（相对主格子）
-  const FOLDER_SCALES = { small: 0.5, medium: 0.66, large: 0.82, same: 1 }
+  /* 这个比例是「内部格子边长 / 主格子边长」，**不是**图标比例 ——
+     图标再按 ICON_RATIO(0.72) 从格子边长算出来（和主网格同源）。
+     这样「文件夹内图标大小 = 与主格一致」时，里面的格子和图标都和主网格一模一样
+     （92 / 66）；其它档位是它的等比缩小版。
+     数值按"看起来和以前差不多大"调过（medium 0.75 → 格子 69、图标 50）。 */
+  const FOLDER_SCALES = { small: 0.55, medium: 0.75, large: 0.95, same: 1 }
 
   function folderScale () {
     return FOLDER_SCALES[store.settings.folderIconSize] || FOLDER_SCALES.medium
@@ -460,6 +465,7 @@
   // 网格模式下内部图标**不显示名称**：名称靠光标气泡（attachNameTip(…, true)）；
   // 列表模式下名称就写在行里，所以不挂气泡。
   const INNER_CHROME = 8      // inner-tile 上下 padding 2px×2 + 边框 1px×2 + 行内 gap 2px
+  const INNER_PAD = 6         // inner-tile 实际吃掉的边距：padding 2×2 + border 1×2
   const LIST_ICON_RATIO = 0.55   // 列表模式下图标相对网格图标的比例
   const LIST_CHROME = 10      // 列表行：上下 padding 4px×2 + 边框 1px×2
 
@@ -486,37 +492,75 @@
       }
     }
 
-    // 横向自适应：在「图标 ≥ 80% 档位值」的候选列数里，选占宽最大的那个
-    const iconMin = Math.max(20, Math.round(iconMax * 0.8))
-    let cols = 1
-    let icon = Math.max(20, Math.min(iconMax, innerW - INNER_CHROME))
-    let bestUsed = -1
-    for (let c = 1; c <= 16; c++) {
-      const w = Math.floor((innerW - (c - 1) * gap) / c) - INNER_CHROME
-      if (w < 20) break
-      const ic = Math.min(iconMax, w)
-      const used = c * (ic + INNER_CHROME) + (c - 1) * gap
-      if (ic >= iconMin && used > bestUsed) { bestUsed = used; cols = c; icon = ic }
+    /* 网格模式：挑一个「最能铺满」的 (列数, 行数) 组合。
+
+       以前只按宽度最大化列数、行数取"最多能放几行"来分页，于是在很多尺寸下会出现：
+         · 末行只有一两个图标，下面空一大条（不对称）；
+         · 图标被挤到比「文件夹内图标大小」还小一档，而右侧还空着。
+       现在按两个指标挑组合：
+         fill    = 网格占用的面积 / 内部可用面积（越大越不浪费）
+         rowFill = 末行图标数 / 列数（越小说明末行越瘪，越难看）
+       取 fill × rowFill 最大的；并列时优先列数多（横向读起来更顺）。
+       格子边长再被「档位上限」和「实际可用空间」双重夹住 ——
+       夹不住就会出现格子比容器还大、图标边缘被 overflow:hidden 裁掉的怪现象。 */
+    const total = store.childCount(folderSc.id)
+    // 档位比例直接作用在**格子边长**上（iconMax 只剩列表模式还在用）
+    const cellMax = Math.max(28, Math.round(cell * scale))
+    const fitCols = (w) => Math.max(1, Math.floor((innerW + gap) / (w + gap)))
+    const fitRows = (h) => Math.max(1, Math.floor((innerH + gap) / (h + gap)))
+    const maxCols = fitCols(cellMax)
+    const maxRows = fitRows(cellMax)
+    const cap = maxCols * maxRows
+
+    // 搜索时允许格子比档位值小一点（≤ 78%），换来排得更匀称；
+    // 但不能无限缩小 —— 太小就变成"格子箍着图标"了。
+    const sizeFloor = Math.max(24, Math.round(cellMax * 0.78))
+    const maxColsS = fitCols(sizeFloor)
+    const maxRowsS = fitRows(sizeFloor)
+
+    let cols = maxCols
+    let rows = maxRows
+    let size = Math.min(cellMax, innerW, innerH)
+
+    if (total > 0 && total <= cap) {
+      // 一页装得下 → 找一个最匀称的摆法
+      let best = null
+      for (let c = Math.min(maxColsS, total); c >= 1; c--) {
+        const r = Math.ceil(total / c)
+        if (r > maxRowsS) continue
+        const w = (innerW - (c - 1) * gap) / c
+        const h = (innerH - (r - 1) * gap) / r
+        const s = Math.min(Math.floor(Math.min(w, h)), cellMax)
+        if (s < sizeFloor) continue          // 缩得太多就不值当了
+        const usedW = c * s + (c - 1) * gap
+        const usedH = r * s + (r - 1) * gap
+        const fill = (usedW * usedH) / (innerW * innerH)
+        const rowFill = (total - (r - 1) * c) / c
+        const score = fill * rowFill
+        if (!best || score > best.score + 1e-9) best = { c: c, r: r, s: s, score: score }
+      }
+      if (best) { cols = best.c; rows = best.r; size = best.s }
     }
-    const rowH = icon + INNER_CHROME
-    const rows = Math.max(1, Math.floor((innerH + gap) / (rowH + gap)))
+
     return {
-      cols: cols, icon: icon, unit: icon + INNER_CHROME, rowH: rowH, rows: rows,
+      cols: cols, icon: Math.max(16, size - INNER_CHROME), unit: size, rowH: size, rows: rows,
       gap: gap, pad: pad, labelH: 0, headH: headH,
       innerW: innerW, innerH: innerH
     }
   }
-
   /* 内部图标的尺寸。格子边长（含跨格）乘 ICON_RATIO —— 和主网格的 iconSizeFor
      用同一个比例，所以里面的图标和格子的关系看起来跟外面一模一样，不会出现
-     "格子箍着图标"的失衡感。 */
+     "格子箍着图标"的失衡感。
+     再夹一道「格子自己的内边距」：无论尺寸怎么算，图标都不会顶到、更不会越出格子
+     （.inner-tile 是 overflow:hidden，越出就会被裁掉边缘）。 */
   function innerIconSize (sc, m) {
     if (m.list) return m.icon          // 列表模式所有行同一个图标尺寸
     const c = sc.col || 1
     const r = sc.row || 1
     const w = m.unit * c + m.gap * (c - 1)          // 格子边长（不先扣内衬）
     const h = m.rowH * r + m.gap * (r - 1)
-    return clamp(Math.round(Math.min(w, h) * ICON_RATIO), 16, 220)
+    const room = Math.min(w, h) - INNER_PAD          // 扣掉 padding 与边框
+    return clamp(Math.round(Math.min(Math.min(w, h) * ICON_RATIO, room)), 16, 220)
   }
 
   /* ---------------- 大文件夹内部：分页 + 翻页 ----------------

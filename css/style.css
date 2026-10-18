@@ -368,12 +368,17 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
   padding: 6px;
 }
 .tile .folder-inner {
-  display: grid; justify-content: start; align-content: start;
+  display: grid;
+  /* 内容**居中**而不是贴左上：格子边长受「文件夹内图标大小」封顶，装得下时
+     难免有富余空间 —— 居中摊到四周是"留白"，贴左上就是"空了一大条"，后者很难看。
+     列表模式仍然贴左上（列表从上往下读才自然）。 */
+  justify-content: center; align-content: center;
   flex: 1 1 auto; min-height: 0;
   /* 只渲染整行（每页 rows × cols），所以 overflow:hidden 只是兜底：
      不会有滚动条、不会有"某一行被裁掉半截"，翻页由 JS 改内容（见 attachFolderPaging） */
   overflow: hidden;
 }
+.tile.folder-list .folder-inner { justify-content: start; align-content: start; }
 
 .inner-tile {
   position: relative;
