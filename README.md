@@ -81,6 +81,7 @@ utools-shortcut-launcher/
 │   ├── layout-test.html   # 布局回归测试（自动对齐 / 自由摆放 / 批量摆放）
 │   ├── folder-test.html   # 大文件夹回归测试（整页翻动 / 无页标 / 无名称 / 点空白处打开）
 │   ├── grid-layout-test.html # 主网格回归测试（图标/格子/名称的尺寸与位置）
+│   ├── run-all-tests.sh   # 一键跑完全部回归测试（下面那些命令它都替你发了）
 │   ├── offline-test.js    # 联网开关自测（源码级验证 fetchFavicon 的离线闸门）
 │   ├── selftest.js        # 桥接层自测（图标/lnk/应用扫描）
 │   ├── smoke.js           # 渲染冒烟校验
@@ -142,6 +143,13 @@ node tools/release.js      # 生成 dist/ 并逐项做合规检查
 ```bash
 # 桥接层自测（需 Windows + PowerShell）
 node tools/selftest.js
+
+# 一键跑完所有回归测试（7 个浏览器测试 + 2 个 Node 测试，推荐）
+bash tools/run-all-tests.sh
+
+# ---------------------------------------------------------------
+# 下面是单独跑某一个的完整命令清单
+# ---------------------------------------------------------------
 
 # 渲染冒烟校验（需 Chrome 可用，检查 DOM 结构）
 node tools/smoke.js <dump-dom-输出文件>

@@ -55,6 +55,7 @@
   function normalizeShortcut (s) {
     const now = Date.now()
     const launch = s.launch || {}
+    const kind = s.kind === 'folder' ? 'folder' : 'shortcut'
     // x / y 是「自由摆放」（关闭自动对齐）时的格子坐标，0 起。
     // 没存过就是 null —— 表示"还没有指定位置"，渲染时按现有顺序补一个空位。
     const pos = v => {
@@ -63,7 +64,7 @@
     }
     return {
       id: s.id || uid('sc'),
-      kind: s.kind === 'folder' ? 'folder' : 'shortcut',
+      kind: kind,
       parentId: s.parentId || null,
       color: s.color || '',
       name: s.name || (launch.target ? String(launch.target).split(/[\\/]/).pop() : '未命名'),
@@ -72,6 +73,11 @@
       row: Math.max(1, Math.min(4, parseInt(s.row, 10) || 1)),
       x: pos(s.x),
       y: pos(s.y),
+      /* 大文件夹的内部显示方式：'grid'（默认，小图标平铺）| 'list'（一行一个，带名称）。
+         只对文件夹有意义，所以其它记录不带这个键。
+         注意：这里是个白名单 —— 任何新增的快捷方式字段都必须加进来，否则
+         updateShortcut 写进内存后能生效，但下次 load()（重新进入插件）就被丢掉了。 */
+      ...(kind === 'folder' ? { folderView: s.folderView === 'list' ? 'list' : 'grid' } : {}),
       launch: {
         kind: launch.kind || 'path',
         target: launch.target || '',

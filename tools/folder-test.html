@@ -397,6 +397,42 @@
       ok('「与主格一致」时内部格子 = 主网格格子', unitS === cellR, unitS + ' vs ' + cellR)
       ok('「与主格一致」时内部图标 = 主网格图标', iconS === mainIcon, iconS + ' vs ' + mainIcon)
       KL.store.setSetting('folderIconSize', savedFolderScale)
+
+      /* ---- 重新进入插件后，列表形态必须还在 ----
+         normalizeShortcut 是**白名单**式重建：以前 folderView 不在里面，
+         于是存盘有、load 时被丢掉 —— 表现为每次重进插件都掉回图标形态。 */
+      KL.store.updateShortcut(folder.id, { folderView: 'list' })
+      KL.store.saveNow()                    // save() 有 320ms 防抖，这里直接落盘
+      KL.store.load()                       // 模拟"重新进入插件"
+      KL.grid.render()
+      var tRe = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
+      ok('重新加载后仍是列表形态', !!tRe && tRe.classList.contains('folder-list'),
+        tRe ? tRe.className : '没找到 tile')
+      ok('重新加载后 folderView 仍是 list',
+        KL.store.getShortcut(folder.id).folderView === 'list',
+        String(KL.store.getShortcut(folder.id).folderView))
+      ok('重新加载后内部仍是单列 + 每行带名称', (function () {
+        if (!tRe) return false
+        var ri = tRe.querySelector('.folder-inner')
+        return ri.style.gridTemplateColumns === '1fr' && !!ri.querySelector('.inner-name')
+      })())
+
+      // 反向也要成立：切回图标 → 落盘 → 重新加载 → 还是图标
+      KL.store.updateShortcut(folder.id, { folderView: 'grid' })
+      KL.store.saveNow()
+      KL.store.load()
+      KL.grid.render()
+      var tRe2 = D.querySelector('.tile.folder-big[data-id="' + folder.id + '"]')
+      ok('切回图标后重新加载仍是图标形态',
+        !!tRe2 && !tRe2.classList.contains('folder-list'),
+        tRe2 ? tRe2.className : '没找到 tile')
+      ok('非文件夹记录不带 folderView 键', (function () {
+        var any = null
+        KL.store.shortcuts.forEach(function (s3) {
+          if (!any && s3.kind !== 'folder') any = s3
+        })
+        return !!any && !('folderView' in any)
+      })())
     } catch (e) {
       out.push('ERROR:' + (e && e.message))
     }
