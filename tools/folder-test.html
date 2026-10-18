@@ -479,10 +479,18 @@
         var cols = tpl.indexOf('repeat(') === 0 ? parseInt(tpl.slice(7).split(',')[0], 10) : 1
         var usedRows = cells.length ? Math.ceil(cells.length / cols) : 0
         var lastRow = cells.length ? cells.length - (usedRows - 1) * cols : 0
+        // 末行自己相对内部的左右留白（末行不满时必须居中，否则那个孤零零的图标会贴着左边）
+        var lrL = Infinity, lrR = -Infinity
+        for (var q = cells.length - lastRow; q < cells.length; q++) {
+          var qr = cells[q].getBoundingClientRect()
+          lrL = Math.min(lrL, qr.left); lrR = Math.max(lrR, qr.right)
+        }
         return {
           mL: Math.round(minL - ir.left), mR: Math.round(ir.right - maxR),
           mT: Math.round(minT - ir.top), mB: Math.round(ir.bottom - maxB),
-          cols: cols, lastRow: lastRow, bad: bad
+          cols: cols, lastRow: lastRow, bad: bad,
+          lrL: lastRow ? Math.round(lrL - ir.left) : 0,
+          lrR: lastRow ? Math.round(ir.right - lrR) : 0
         }
       }
       var combos = [[2, 2, 3], [2, 2, 4], [3, 2, 5], [3, 2, 7], [3, 2, 9], [3, 2, 12],
@@ -493,11 +501,14 @@
         if (Math.abs(r.mL - r.mR) > 3 || Math.abs(r.mT - r.mB) > 3) {
           asymBad.push(c.join('x') + ' 左右' + r.mL + '/' + r.mR + ' 上下' + r.mT + '/' + r.mB)
         }
-        if (r.lastRow < Math.ceil(r.cols / 2)) rowBad.push(c.join('x') + ' 末行' + r.lastRow + '/' + r.cols)
+        // 末行：要么排满（lastRow === cols），要么左右留白相等（居中）
+        if (r.lastRow < r.cols && Math.abs(r.lrL - r.lrR) > 3) {
+          rowBad.push(c.join('x') + ' 末行' + r.lastRow + '/' + r.cols + ' 留白' + r.lrL + '/' + r.lrR)
+        }
         if (r.bad) clipBad.push(c.join('x') + ' 越界' + r.bad)
       })
       ok('各种尺寸下留白左右/上下都对称', asymBad.length === 0, asymBad.join(' ; '))
-      ok('各种尺寸下末行都不会太瘪', rowBad.length === 0, rowBad.join(' ; '))
+      ok('各种尺寸下末行要么排满、要么居中', rowBad.length === 0, rowBad.join(' ; '))
       ok('各种尺寸下格子/图标都没有越界被裁', clipBad.length === 0, clipBad.join(' ; '))
     } catch (e) {
       out.push('ERROR:' + (e && e.message))

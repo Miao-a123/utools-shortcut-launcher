@@ -497,10 +497,14 @@
        以前只按宽度最大化列数、行数取"最多能放几行"来分页，于是在很多尺寸下会出现：
          · 末行只有一两个图标，下面空一大条（不对称）；
          · 图标被挤到比「文件夹内图标大小」还小一档，而右侧还空着。
-       现在按两个指标挑组合：
-         fill    = 网格占用的面积 / 内部可用面积（越大越不浪费）
+       现在按三个指标挑组合：
+         wFill   = 横向占用 / 内部宽度
+         hFill   = 纵向占用 / 内部高度
          rowFill = 末行图标数 / 列数（越小说明末行越瘪，越难看）
-       取 fill × rowFill 最大的；并列时优先列数多（横向读起来更顺）。
+       打分 min(wFill, hFill) × (0.5 + 0.5·rowFill)，取最高；
+       并列时优先列数多（横向读起来更顺）。
+       用 min(两个方向) 而不是面积：面积分不出"铺满但形状怪"——实测出现过
+       2×3 的文件夹里 5 个图标被排成一列（竖向 100%、横向 37%，面积分反而最高）。
        格子边长再被「档位上限」和「实际可用空间」双重夹住 ——
        夹不住就会出现格子比容器还大、图标边缘被 overflow:hidden 裁掉的怪现象。 */
     const total = store.childCount(folderSc.id)
@@ -534,10 +538,22 @@
         if (s < sizeFloor) continue          // 缩得太多就不值当了
         const usedW = c * s + (c - 1) * gap
         const usedH = r * s + (r - 1) * gap
-        const fill = (usedW * usedH) / (innerW * innerH)
+        /* 打分用「两个方向里较瘪的那个」而不是面积。
+           面积分不出"铺满但形状怪"和"铺满且协调" —— 实测出现过 2×3 的文件夹里
+           5 个图标被排成**一列**（竖向填满 100%、横向只占 37%，面积分反而更高）这种
+           又窄又长的怪排法。取 min(横向填充, 纵向填充) 就天然偏好像素形状
+           接近容器的摆法，横着一长条、竖着一长条的排法都拿不到高分。
+           rowFill 用来压"末行只剩一两个"：取**平方**，末行只剩 1/3 时系数掉到 0.11，
+           这样"末行只放一个图标"的摆法基本不会被选中（线性系数 0.67 太温柔了，
+           实测会让 4 个图标排成 3+1，第二行孤零零挂一个）。 */
+        const wFill = usedW / innerW
+        const hFill = usedH / innerH
         const rowFill = (total - (r - 1) * c) / c
-        const score = fill * rowFill
-        if (!best || score > best.score + 1e-9) best = { c: c, r: r, s: s, score: score }
+        const score = Math.min(wFill, hFill) * rowFill * rowFill
+        /* 先比格子大（"充分利用空间"最直接的体现就是图标更大），
+           一样大时再比上面那个匀称分。 */
+        const better = !best || s > best.s || (s === best.s && score > best.score + 1e-9)
+        if (better) best = { c: c, r: r, s: s, score: score }
       }
       if (best) { cols = best.c; rows = best.r; size = best.s }
     }
@@ -587,7 +603,43 @@
       inner.appendChild(node)
       tileNodes[k.id] = node
     }
+    centerLastRow(show, m)
     return pages
+  }
+
+  /* 末行居中。
+     数量凑不满整行时（比如 3 列装 7 个 → 3+3+1），网格默认会把剩下的那一个
+     摆在**第一列**，看起来像"贴着左边掉下来了"。整块居中救不了它 ——
+     它偏在块内的左边。这里给末行整体挪一个格子的偏移量，让它落在中间。
+     几种不处理的情况：
+       · 列表模式（一行一个，天生就是满的）
+       · 只有一行（没有"末行"一说）
+       · 子项里有跨格的（col/row > 1）—— 行内位置由网格自动排布决定，
+         硬塞 gridColumnStart 会把它挤歪，宁可不动 */
+  function centerLastRow (show, m) {
+    const cols = m.cols
+    if (m.list || cols < 2 || show.length <= cols) return
+    if (show.some(k => (k.col || 1) > 1 || (k.row || 1) > 1)) return
+    const left = show.length % cols
+    if (!left) return                       // 整页刚好排满
+    const offset = Math.floor((cols - left) / 2)
+    const tail = show.slice(show.length - left)
+    if (offset > 0) {
+      // 能整格挪就整格挪（3 列装 1 个 → 挪到中间那列）
+      for (let i = 0; i < tail.length; i++) {
+        const node = tileNodes[tail[i].id]
+        if (node) node.style.gridColumnStart = String(offset + 1 + i)
+      }
+      return
+    }
+    /* 只缺一个（4 列装 3 个这种）时整格挪会挪过头，必须挪**半格**。
+       格子轨道是固定像素，挪不了半列，所以用 transform 平移；
+       用 transform 而不是 margin-left：后者会把格子挤窄。 */
+    const half = Math.round((m.unit + m.gap) / 2)
+    for (const k of tail) {
+      const node = tileNodes[k.id]
+      if (node) node.style.transform = 'translateX(' + half + 'px)'
+    }
   }
 
   // 翻页后只重绘这个文件夹的内部，别整屏 render
