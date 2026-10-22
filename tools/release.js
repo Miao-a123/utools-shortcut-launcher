@@ -94,15 +94,38 @@ if (fs.existsSync(htmlPath)) {
 
 // 合规检查
 console.log('\n—— 发布目录合规检查 ——')
+/* 注意这里检查的是**刚刚由本脚本生成**的 dist/（上面第 72 行已经 rmrf 清空重建），
+   所以它只能兜住"FILES 清单本身写错 / 拷贝逻辑出错"这类问题，
+   抓不到"有人手工往 dist 里塞了东西" —— 那种情况会在下次构建时被 rmrf 清掉。
+   真正需要防的是**源文件被混进发布清单**，下面另有一道源仓库检查。 */
 const present = walk(OUT, '')
+/* *.map 是通配，没法放进 FORBIDDEN 的"路径前缀"比较里，单独判一次。
+   以前日志里一直打印"✓ 无 … *.map …"，但 FORBIDDEN 里根本没有这条规则 ——
+   属于"宣称检查但没实现"，这里补上。 */
+const maps = present.filter(function (p) { return /\.map$/i.test(p) })
+if (maps.length) errors.push('发布目录含 sourcemap：' + maps.join(', '))
 const bad = present.filter(function (p) {
   return FORBIDDEN.some(function (f) { return p === f || p.indexOf(f + '/') === 0 })
 })
 if (bad.length) {
   errors.push('发布目录含禁止项：' + bad.join(', '))
   console.log('✗ 含禁止项：' + bad.join(', '))
+} else if (maps.length) {
+  console.log('✗ 含 sourcemap：' + maps.join(', '))
 } else {
   console.log('✓ 无 .git / .gitignore / .vscode / *.map / mock.js / node_modules')
+}
+
+/* 源仓库检查：FILES 清单里**不许**出现这些（防止哪天顺手把 .map / mock.js 加进清单）。
+   这条才是真正能防住"不该发布的东西被打包"的检查。 */
+const FILE_LIST_BAD = present.filter(function (p) {
+  return /\.map$/i.test(p) || /(^|\/)mock\.js$/.test(p) || p.indexOf('.git') === 0
+})
+if (FILE_LIST_BAD.length) {
+  errors.push('FILES 清单里混进了不该发布的文件：' + FILE_LIST_BAD.join(', '))
+  console.log('✗ 清单含不该发布的文件：' + FILE_LIST_BAD.join(', '))
+} else {
+  console.log('✓ 发布清单里没有 sourcemap / mock.js / .git')
 }
 
 // 外部静态资源检查（http/https 的 script/link/img）

@@ -8,9 +8,20 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.8.2'
+  const VERSION = '1.8.3'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.8.3',
+      date: '2026-10-22',
+      items: [
+        '修复：使用手册里「外观设置」那张表有一半渲染不出来（表格中间被一段提示语隔断），现已补全 —— 顺带把漏掉的设置项都补上了',
+        '修复：使用手册里几处操作说明写得不对 —— 「扫描本机应用 / 导入浏览器收藏夹」其实在右上角「添加」菜单里（不在底部）、「装进文件夹」只在底部批量条上（右键批量菜单里没有）、新建分类的「+」在侧边栏顶部（不在底部），以及几个右键菜单项的名称与实际不符',
+        '改进：导入浏览器收藏夹时，文件夹的勾选框现在会显示**半选**状态（已选几个 / 共几个），以前部分勾选时看起来和完全没选一样',
+        '修复：发布检查脚本一直宣称会检查 sourcemap 文件、实际没有这条规则，现已补上；同时加了一道检查，防止不该发布的文件被写进发布清单',
+        '修复：使用手册版本号停在旧版'
+      ]
+    },
     {
       v: '1.8.2',
       date: '2026-10-22',
@@ -1248,8 +1259,14 @@
             head.appendChild(cnt)
             const kids = el('div', 'folder-kids')
             const inner = collect(child, [])
-            const allOn = inner.length > 0 && inner.every(u => picked.has(u.url))
+            const onCount = inner.filter(u => picked.has(u.url)).length
+            const allOn = inner.length > 0 && onCount === inner.length
+            /* 三态：全选 / 半选（部分子项被勾选）/ 未选。
+               以前只有两态，部分勾选时勾选框看起来和完全没选一样 ——
+               用户不知道自己已经选了几个。 */
             cb.classList.toggle('on', allOn)
+            cb.classList.toggle('part', !allOn && onCount > 0)
+            cb.title = allOn ? '全部已选' : (onCount > 0 ? ('已选 ' + onCount + ' / ' + inner.length) : '未选')
             head.addEventListener('click', e => {
               if (e.target === tw) {
                 kids.classList.toggle('collapsed')

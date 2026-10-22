@@ -784,6 +784,16 @@ select.input { padding-right: 6px; }
 }
 .list-item.on .check,
 .check.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* 半选（部分子项被勾选）：显示一条横杠。
+   收藏夹树里父文件夹以前只有"全选 / 未选"两态，部分勾选时看起来和完全没选一样，
+   用户不知道自己已经选了几个 —— 这个状态是必要的反馈。 */
+.check.part {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.check.part svg { display: none; }
+.check.part::after {
+  content: ''; width: 8px; height: 2px; border-radius: 1px; background: #fff;
+}
 
 .tree-folder { padding: 6px 10px; }
 .folder-head {

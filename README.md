@@ -85,6 +85,7 @@ utools-shortcut-launcher/
 │   ├── run-all-tests.sh   # 一键跑完全部回归测试（下面那些命令它都替你发了）
 │   ├── offline-test.js    # 联网开关自测（源码级验证 fetchFavicon 的离线闸门）
 │   ├── preload-test.js    # preload 安全/健壮性自测（命令注入 / 数据损坏保护 / 任意文件读 / SSRF）
+│   ├── doc-test.js        # 文档-代码一致性自检（版本号 / 手册里的按钮与菜单名 / 表格结构 / 宣称的检查真的实现了）
 │   ├── selftest.js        # 桥接层自测（图标/lnk/应用扫描）
 │   ├── smoke.js           # 渲染冒烟校验
 │   └── make-logo.py       # logo 生成脚本
@@ -156,7 +157,7 @@ node tools/release.js      # 生成 dist/ 并逐项做合规检查
 # 桥接层自测（需 Windows + PowerShell）
 node tools/selftest.js
 
-# 一键跑完所有回归测试（8 个浏览器测试 + 3 个 Node 测试，推荐）
+# 一键跑完所有回归测试（8 个浏览器测试 + 4 个 Node 测试，推荐）
 bash tools/run-all-tests.sh
 
 # ---------------------------------------------------------------
@@ -175,6 +176,11 @@ node tools/offline-test.js
 #   readImageAsDataUrl 的扩展名白名单与魔数校验 / fetchFavicon 的内网地址拦截 /
 #   stdin 写入失败处理 / 退出清理 / 日志轮转
 node tools/preload-test.js
+
+# 文档-代码一致性自检（不需要浏览器）：
+#   版本号四处是否一致 / 手册里提到的按钮和菜单名在代码里是否真的存在 /
+#   手册的 Markdown 表格有没有被打断 / README 宣称的检查（如 *.map）是否真的实现了
+node tools/doc-test.js
 
 # UI 回归测试：用 iframe 加载真实 index.html，在 782×524（模拟 uTools 窄窗口）下
 # 校验右键菜单二级菜单的边界处理
