@@ -111,18 +111,43 @@
     return state
   }
 
+  /* 数据文件损坏时的保护：置为只读，拒绝一切写入。
+     背景：preload 的 readData() 以前在解析失败时返回 null，和"全新安装"无法区分，
+     于是界面变成空的、用户随手操作一下就触发 saveNow()，把磁盘上那份真实数据
+     （本机实测 2.2MB）覆盖成空。现在 preload 会抛 code='DATA_CORRUPT' 的错，
+     这里接住它 → 进只读模式 → 保存被拦下并提示备份位置。 */
+  let readOnly = false
+  let corruptBackup = ''
+
   function load () {
     let raw = null
+    readOnly = false
+    corruptBackup = ''
     try {
       raw = S.loadData()
     } catch (e) {
-      console.warn('load failed', e)
+      if (e && e.code === 'DATA_CORRUPT') {
+        readOnly = true
+        corruptBackup = e.backupPath || ''
+        console.error('data corrupt', e)
+        if (KL.toast) {
+          KL.toast('数据文件损坏' + (corruptBackup ? '，已备份到 ' + corruptBackup : '') +
+            '。为免覆盖，本次不会保存任何改动', 'error', 8000)
+        }
+      } else {
+        console.warn('load failed', e)
+      }
     }
     return normalize(raw)
   }
 
   function saveNow () {
     dirty = false
+    if (readOnly) {
+      // 只读模式：绝不能把空 state 写回去覆盖掉损坏前的数据
+      console.warn('save skipped: data file is corrupt, refusing to overwrite')
+      return
+    }
     try {
       S.saveData(state)
     } catch (e) {
@@ -629,6 +654,9 @@
     get settings () { return state.settings },
     get categories () { return state.categories },
     get shortcuts () { return state.shortcuts },
+    /* 数据文件损坏 → 只读。UI 可以据此禁用编辑入口（目前只在保存时拦截 + toast）。 */
+    get readOnly () { return readOnly },
+    get corruptBackup () { return corruptBackup },
     uid,
     load,
     save,

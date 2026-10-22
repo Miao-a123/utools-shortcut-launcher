@@ -219,7 +219,10 @@
         continue
       }
       const row = el('div', 'item' + (it.danger ? ' danger' : '') + (it.items ? ' has-sub' : ''))
-      row.innerHTML = (it.icon || '') + '<span>' + esc(it.label) + '</span>' +
+      /* it.icon 必须转义：以前这里是直接拼进 innerHTML 的，虽然目前没有任何调用方
+         传 icon 字段（死路径），但将来谁想给菜单项加图标、尤其是从 data.json 读的图标，
+         就会直接变成 HTML 注入点。 */
+      row.innerHTML = (it.icon ? esc(it.icon) : '') + '<span>' + esc(it.label) + '</span>' +
         (it.hint ? '<span class="k">' + esc(it.hint) + '</span>' : '')
       if (it.disabled) {
         row.style.opacity = '.4'

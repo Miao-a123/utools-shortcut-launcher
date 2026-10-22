@@ -8,9 +8,22 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.8.1'
+  const VERSION = '1.8.2'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.8.2',
+      date: '2026-10-22',
+      items: [
+        '安全修复：去掉了一处可能被利用来**执行任意命令**的回退逻辑（打开网址失败时曾经绕道 cmd.exe，而网址、文件路径里的 `&` 等字符会被 cmd 重新解析）。现在打开失败就如实报错，不再绕路',
+        '修复：数据文件万一损坏（断电、强制结束进程等），以前会**静默变成空面板**，随手操作一下就把真实数据覆盖没了。现在会备份损坏的文件、进入只读保护、明确提示你备份在哪 —— 不会再覆盖',
+        '修复：改进了「读取本地图片当图标」的检查，不再可能被用来读非图片文件',
+        '修复：抓取网站图标时会拒绝指向本机 / 内网地址的请求（避免被网页内容牵着去访问内网）',
+        '修复：调用系统组件失败时（例如被安全软件拦截）现在会**明确提示失败**，而不是显示"完成，0 项"',
+        '修复：插件关闭时会一并结束后台的 PowerShell 进程，不再残留',
+        '修复：日志文件写满后改为**保留上一份**再开新文件，不再把历史日志直接清空（排查问题时很有用）'
+      ]
+    },
     {
       v: '1.8.1',
       date: '2026-10-22',
@@ -697,6 +710,13 @@
     if (!list.length) return { added: 0, skipped: 0 }
     const catId = o.categoryId === undefined ? currentCategoryId() : o.categoryId
     const res = await S.resolvePaths(list)
+    /* PS 解析整体失败（powershell.exe 被拦、agent 挂掉且一次性调用也失败）时必须说出来。
+       以前 preload 把失败静默成 {ok:true, items:[]}，界面表现是"添加了 0 项"，
+       用户完全不知道是出错而不是"这些文件没被识别"。 */
+    if (res && res.ok === false) {
+      toast('解析失败：' + (res.error || '未知错误'), 'error')
+      return { added: 0, skipped: 0 }
+    }
     const rows = (res && res.items) || []
     const added = []
     const iconJobs = []

@@ -43,7 +43,15 @@ function log (...args) {
     })
     const line = '[' + new Date().toISOString() + '] ' + parts.join(' ') + '\n'
     fs.appendFileSync(LOG_FILE, line)
-    if (fs.statSync(LOG_FILE).size > 512 * 1024) fs.writeFileSync(LOG_FILE, '')
+    /* 轮转而不是清空：以前超过 512KB 直接 writeFileSync('')，正好在最需要上下文
+       （刚崩过、刚出过错）的时候把历史证据全删了。现在留一份 .1。 */
+    let size = 0
+    try { size = fs.statSync(LOG_FILE).size } catch (e) { size = 0 }
+    if (size > 512 * 1024) {
+      const old = LOG_FILE + '.1'
+      try { if (fs.existsSync(old)) fs.unlinkSync(old) } catch (e) {}
+      try { fs.renameSync(LOG_FILE, old) } catch (e) {}
+    }
   } catch (e) {}
 }
 
@@ -100,6 +108,8 @@ function startAgent () {
     }
   })
   agent.stderr.on('data', d => log('agent stderr', String(d).slice(0, 1500)))
+  // stdin 也要挂 error：写入已死管道时错误从这里来（write 本身不同步抛错）
+  agent.stdin.on('error', e => log('agent stdin error', e.message))
   const onDead = () => {
     for (const [, p] of agentPending) p.resolve({ ok: false, agentDead: true, error: 'agent exited' })
     agentPending.clear()
@@ -124,20 +134,30 @@ function agentCall (mode, payload, timeout) {
     const a = startAgent()
     if (!a) return resolve({ ok: false, agentDead: true, error: 'no agent' })
     const id = ++agentSeq
+    const done = r => {
+      clearTimeout(timer)
+      agentPending.delete(id)
+      resolve(r)
+    }
     const timer = setTimeout(() => {
       agentPending.delete(id)
       log('agent timeout', mode)
       resolve({ ok: false, agentDead: true, error: 'timeout' })
     }, timeout || 180000)
-    agentPending.set(id, {
-      resolve: r => { clearTimeout(timer); resolve(r) }
-    })
+    agentPending.set(id, { resolve: r => { clearTimeout(timer); resolve(r) } })
+    /* stdin.write 的坑（实测确认）：向已退出的子进程写入**不会同步抛异常**，
+       只返回 false 并把错误交给 callback。原来只写了 try/catch，于是：
+       进程刚死、'exit' 还没派发的窗口期里进来的请求，JSON 根本没发出去，
+       只能干等到超时（默认 180s、扫描 240s）—— UI 上就是"点了转圈好几分钟"。
+       现在用 callback 立刻失败，并且给 stdin 挂 error 监听兜底。 */
     try {
-      a.stdin.write(JSON.stringify({ id, mode, payload: payload || {} }) + '\n')
+      a.stdin.write(JSON.stringify({ id, mode, payload: payload || {} }) + '\n', err => {
+        if (!err) return
+        log('agent write failed', mode, err.message)
+        if (agentPending.has(id)) done({ ok: false, agentDead: true, error: err.message })
+      })
     } catch (e) {
-      clearTimeout(timer)
-      agentPending.delete(id)
-      resolve({ ok: false, agentDead: true, error: e.message })
+      done({ ok: false, agentDead: true, error: e.message })
     }
   })
 }
@@ -187,26 +207,56 @@ async function callPS (mode, payload, timeout) {
  * Data persistence
  * ------------------------------------------------------------------ */
 
+/* 读数据。返回值有明确的三态语义，store.load() 依赖这个区分：
+     · null  —— 文件不存在 / 空文件（= 全新安装，可以正常写入）
+     · 对象  —— 正常
+     · 抛错  —— **文件存在但读不出来/解析不了（损坏）**，带 code='DATA_CORRUPT'
+   为什么必须抛错：以前这里 `return null`，于是"数据损坏"和"全新安装"完全无法区分 ——
+   store.load() 拿到 null 就 normalize 成空 state，界面上没有任何提示；用户以为数据没了，
+   随手加一个快捷方式触发保存，2MB 的真实数据就被空数据覆盖了（实测确认过这条路径）。
+   现在抛错让上层能拦住写入。 */
 function readData () {
   ensureDirs()
+  let txt
   try {
-    if (!fs.existsSync(DATA_FILE)) return null
-    const txt = fs.readFileSync(DATA_FILE, 'utf8').replace(/^\uFEFF/, '')
-    if (!txt.trim()) return null
+    txt = fs.readFileSync(DATA_FILE, 'utf8')
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return null      // 文件不存在 = 全新安装
+    throw e
+  }
+  txt = txt.replace(/^\uFEFF/, '')
+  if (!txt.trim()) return null                     // 空文件也当全新安装
+  try {
     return JSON.parse(txt)
   } catch (e) {
     log('readData failed', e.message)
+    let bak = ''
     try {
-      fs.copyFileSync(DATA_FILE, DATA_FILE + '.broken-' + Date.now())
-    } catch (e2) {}
-    return null
+      bak = DATA_FILE + '.broken-' + Date.now()
+      fs.copyFileSync(DATA_FILE, bak)
+    } catch (e2) { bak = '' }
+    const err = new Error('数据文件损坏' + (bak ? '，已备份到 ' + bak : ''))
+    err.code = 'DATA_CORRUPT'
+    err.backupPath = bak
+    throw err
   }
 }
 
 function writeData (data) {
   ensureDirs()
-  const tmp = DATA_FILE + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(data), 'utf8')
+  /* .tmp 带 pid + 时间戳：固定名在"两个窗口同时保存"时会互相覆盖对方的临时文件。
+     先写 tmp 再 rename 已经是原子替换；这里再补一次 fsync，避免 rename 成功后
+     内容还留在 page cache 里，断电后得到"文件名对、内容是空的"的 data.json。 */
+  const tmp = DATA_FILE + '.' + process.pid + '.' + Date.now() + '.tmp'
+  const json = JSON.stringify(data)
+  let fd = null
+  try {
+    fd = fs.openSync(tmp, 'w')
+    fs.writeFileSync(fd, json, 'utf8')
+    try { fs.fsyncSync(fd) } catch (e) {}
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd) } catch (e) {} }
+  }
   fs.renameSync(tmp, DATA_FILE)
   return { ok: true, bytes: fs.statSync(DATA_FILE).size }
 }
@@ -214,6 +264,37 @@ function writeData (data) {
 /* ------------------------------------------------------------------ *
  * HTTP helpers (favicon)
  * ------------------------------------------------------------------ */
+
+/* 拦住指向本机 / 内网的地址。
+   为什么需要：fetchFavicon 会跟随页面里 <link rel=icon> 给的**任意** href
+   （parseIconLinks 只做 new URL(href, base)，不校验同源），也会跟随重定向，
+   于是"用户加一个外网网址"就能变成"本机替第三方去打内网"。
+   典型目标：169.254.169.254（云元数据）、127.0.0.1 上的管理接口、
+   192.168.x 路由器的 GET 型 reboot 接口。
+   只拦字面 IP 与 localhost 系（不做 DNS 解析后再校验 —— 那会让每次抓图标
+   多一次解析、且解析结果与真正连接用的可能不同，收益不大）。 */
+function isBlockedHost (hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '')
+  if (!h) return true
+  if (h === 'localhost' || /\.localhost$/.test(h) || /\.local$/.test(h) || /\.internal$/.test(h)) return true
+  const net = require('net')
+  const v = net.isIP(h)
+  if (!v) return false                       // 域名放行（见上方说明）
+  if (v === 4) {
+    const p = h.split('.').map(Number)
+    if (p[0] === 127 || p[0] === 10 || p[0] === 0) return true
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true
+    if (p[0] === 192 && p[1] === 168) return true
+    if (p[0] === 169 && p[1] === 254) return true
+    if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true   // CGNAT
+    return false
+  }
+  // IPv6：::1、fc00::/7（ULA）、fe80::/10（链路本地）
+  if (h === '::1' || h === '::') return true
+  if (/^f[cd]/.test(h)) return true
+  if (/^fe[89ab]/.test(h)) return true
+  return false
+}
 
 function request (url, opts) {
   const o = opts || {}
@@ -224,10 +305,18 @@ function request (url, opts) {
     let settled = false
     const finish = v => { if (!settled) { settled = true; resolve(v) } }
     let mod
+    let parsed
     try {
-      mod = new URL(url).protocol === 'http:' ? http : https
+      parsed = new URL(url)
+      mod = parsed.protocol === 'http:' ? http : https
     } catch (e) {
       return finish({ ok: false, error: 'bad url' })
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return finish({ ok: false, error: 'bad protocol' })
+    }
+    if (isBlockedHost(parsed.hostname)) {
+      return finish({ ok: false, error: 'blocked host' })
     }
     let req
     try {
@@ -545,19 +634,22 @@ function parseUrlFileRaw (p) {
   }
 }
 
-// 用系统 shell 打开（支持 http(s) 与自定义协议）
+/* 用系统 shell 打开（支持 http(s) 与自定义协议）
+   ⚠️ 这里**绝不能**退回 `cmd.exe /c start`。原因（实测确认）：
+   Node 的 cp.spawn 用数组传参只保证"参数不被 Node 拆分"，但 cmd.exe 收到命令行后
+   **自己会再解析一遍**，`& | < > ^` 在 cmd 里是元字符。只要 target 里没有空格，
+   Node 就不会给它加引号，于是
+       target = "C:\Windows\System32\whoami.exe&echo+PWNED>%TEMP%\x.txt"
+   会把后半段当成独立命令执行 —— 任意命令执行。而 target 来自用户拖入的 .url/.lnk、
+   导入的 data.json，都是不可信输入。
+   正确做法：shellOpenExternal 走的是系统 ShellExecute，它失败就说明协议没注册，
+   cmd 也救不回来。直接返回失败即可。 */
 function openExternalViaShell (target) {
   try {
     if (utools.shellOpenExternal(target) !== false) return true
+    return false
   } catch (e) {
     log('shellOpenExternal failed', target, e.message)
-  }
-  try {
-    const child = cp.spawn('cmd.exe', ['/c', 'start', '', target], { detached: true, stdio: 'ignore', windowsHide: true })
-    child.on('error', e => log('start fallback failed', e.message))
-    child.unref()
-    return true
-  } catch (e) {
     return false
   }
 }
@@ -597,12 +689,11 @@ function launch (sc) {
       if (args.length > 0) {
         const opts = { detached: true, stdio: 'ignore', windowsHide: false }
         if (l.workDir && fs.existsSync(l.workDir)) opts.cwd = l.workDir
-        let child
-        try {
-          child = cp.spawn(target, args, opts)
-        } catch (e) {
-          child = cp.spawn('cmd.exe', ['/c', 'start', '', target].concat(args), { detached: true, stdio: 'ignore', windowsHide: true })
-        }
+        /* 注意：这里**没有** cmd.exe 回退分支。
+           cp.spawn 对不存在的 exe 不会同步抛错（只异步 emit 'error'），所以原来那个
+           try/catch 里的 cmd 回退既是死代码、又是个命令注入入口（见 openExternalViaShell
+           上方的说明）。spawn 失败由下面的 'error' 处理器兜底到 shellOpenPath。 */
+        const child = cp.spawn(target, args, opts)
         child.on('error', e => {
           log('launch spawn error', target, e.message)
           try { utools.shellOpenPath(target) } catch (e2) {}
@@ -623,6 +714,36 @@ function launch (sc) {
 /* ------------------------------------------------------------------ *
  * Exposed API
  * ------------------------------------------------------------------ */
+
+/* 校验文件头魔数，用于 readImageAsDataUrl —— 不信任扩展名。
+   SVG 是文本格式，没有魔数，只能做"开头看起来像 svg/xml"的弱校验
+   （它的风险由调用侧负责：只从本地文件读，且渲染时走 <img src>，脚本不会执行）。 */
+function looksLikeImage (buf, ext) {
+  if (!buf || buf.length < 4) return false
+  const b = i => buf[i]
+  switch (ext) {
+    case 'png':
+      return b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4E && b(3) === 0x47
+    case 'jpg':
+    case 'jpeg':
+      return b(0) === 0xFF && b(1) === 0xD8 && b(2) === 0xFF
+    case 'gif':
+      return b(0) === 0x47 && b(1) === 0x49 && b(2) === 0x46
+    case 'bmp':
+      return b(0) === 0x42 && b(1) === 0x4D
+    case 'webp':
+      return b(0) === 0x52 && b(1) === 0x49 && b(2) === 0x46 && b(3) === 0x46 &&
+        buf.length >= 12 && buf.toString('ascii', 8, 12) === 'WEBP'
+    case 'ico':
+      return b(0) === 0x00 && b(1) === 0x00 && (b(2) === 0x01 || b(2) === 0x00) && b(3) === 0x00
+    case 'svg': {
+      const head = buf.toString('utf8', 0, Math.min(buf.length, 1024)).trim().toLowerCase()
+      return head.indexOf('<svg') >= 0 || (head.indexOf('<?xml') === 0 && head.indexOf('<svg') >= 0)
+    }
+    default:
+      return false
+  }
+}
 
 const services = {
   isUtools: true,
@@ -673,7 +794,13 @@ const services = {
     for (let i = 0; i < list.length; i += 40) {
       const chunk = list.slice(i, i + 40)
       const r = await callPS('resolve', { paths: chunk }, 120000)
-      const items = (r && r.ok && r.data) ? toArray(r.data.items) : []
+      /* PS 整体失败时要把错误透出去，不能返回"ok 但零条"。
+         以前这里把 !r.ok 静默成空数组，于是 powershell.exe 被拦（EDR/组策略）时
+         界面显示"添加了 0 项"，用户完全不知道是失败了。 */
+      if (!r || !r.ok) {
+        return { ok: false, error: (r && r.error) || '解析失败', items: out }
+      }
+      const items = r.data ? toArray(r.data.items) : []
       for (let k = 0; k < items.length; k++) {
         const p = String(chunk[k] || '')
         let it = items[k]
@@ -723,7 +850,13 @@ const services = {
         }
       })
       const r = await callPS('icons', { items: chunk }, 180000)
-      if (r && r.ok && r.data) {
+      /* 同样不能把 PS 失败吞成"成功但没图标"：以前这里 `if (r && r.ok && r.data)`
+         失败就直接跳过，调用侧看到 ok:true + 空 items，表现为"所有图标都空着"
+         而没有任何错误提示。 */
+      if (!r || !r.ok) {
+        return { ok: false, error: (r && r.error) || '图标提取失败', items: out, engine }
+      }
+      if (r.data) {
         if (r.data.engine === false) engine = false
         out.push.apply(out, toArray(r.data.items))
       }
@@ -745,18 +878,27 @@ const services = {
 
   launch,
 
+  /* 把本地图片读成 data URL。
+     ⚠️ 这个 API 暴露给了渲染进程，所以必须**真的只读图片**：
+     以前它名字叫"读图片"，实际是任意文件读取原语（传 id_rsa / Login Data 也会
+     原样 base64 返回，MIME 还被错标成 image/png）。现在加两道闸：
+       1. 扩展名白名单；
+       2. 文件头魔数校验 —— 不信任扩展名，改名的 .exe 会被拦下。 */
   readImageAsDataUrl (p) {
     try {
+      const ext = path.extname(String(p || '')).toLowerCase().replace('.', '')
+      const MIME = {
+        png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+        gif: 'image/gif', bmp: 'image/bmp', webp: 'image/webp',
+        ico: 'image/x-icon', svg: 'image/svg+xml'
+      }
+      const mime = MIME[ext]
+      if (!mime) return { ok: false, error: '不支持的图片格式：.' + ext }
+      const st = fs.statSync(p)
+      if (!st.isFile()) return { ok: false, error: '不是文件' }
+      if (st.size > 8 * 1024 * 1024) return { ok: false, error: '图片过大' }
       const buf = fs.readFileSync(p)
-      if (buf.length > 8 * 1024 * 1024) return { ok: false, error: '图片过大' }
-      const ext = path.extname(p).toLowerCase().replace('.', '')
-      const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-        : ext === 'svg' ? 'image/svg+xml'
-          : ext === 'webp' ? 'image/webp'
-            : ext === 'gif' ? 'image/gif'
-              : ext === 'bmp' ? 'image/bmp'
-                : ext === 'ico' ? 'image/x-icon'
-                  : 'image/png'
+      if (!looksLikeImage(buf, ext)) return { ok: false, error: '文件内容不是有效的图片' }
       return { ok: true, dataUrl: 'data:' + mime + ';base64,' + buf.toString('base64') }
     } catch (e) {
       return { ok: false, error: e.message }
@@ -874,6 +1016,16 @@ const services = {
     stopAgent()
   }
 }
+
+/* 进程退出时收拾常驻 PowerShell，别把它留成孤儿。
+   以前 services.shutdown 有实现但**没有任何调用方**（全项目搜索确认），
+   于是插件关掉后 PS 还在跑 —— 如果它正在执行 240s 的应用扫描，会一直驻留到跑完。
+   注意：不要挂在 onPluginOut 上，那是"失焦"不是"销毁"，每次切回来都重编译 C# 太亏。 */
+try {
+  process.on('exit', stopAgent)
+  process.on('SIGTERM', () => { stopAgent(); process.exit(0) })
+  process.on('SIGINT', () => { stopAgent(); process.exit(0) })
+} catch (e) {}
 
 window.services = services
 // uTools 默认关掉 contextIsolation，这时 contextBridge 本身就不可用 —— 属于预期情况：

@@ -8,6 +8,148 @@
 
 ---
 
+## v1.8.2 — 安全加固：命令注入 / 数据被覆盖 / 任意文件读（2026-10-22）
+
+本轮是对 `preload.js`（Node 侧）的一次安全与健壮性审计。**所有结论都做了实测复现**，
+不是读代码推断出来的。PS 桥接层（`tools/ps-bridge.ps1`）经核实是干净的：
+全程 `-LiteralPath` + JSON 反序列化，没有任何字符串拼接执行（`Invoke-Expression` / `iex` 零命中）。
+
+### 1. `cmd.exe /c start` 回退 → 任意命令执行（🔴 安全）
+
+**问题**：`openExternalViaShell()`（打开网址的兜底）和 `launch()` 里带 args 的 spawn 失败分支，
+都写了：
+
+```js
+cp.spawn('cmd.exe', ['/c', 'start', '', target], { ... })
+```
+
+用数组传参只保证"参数不被 **Node** 拆分"，但 **cmd.exe 收到命令行后会自己再解析一遍**，
+`& | < > ^` 在 cmd 里是元字符。只要 target 里没有空格，Node 就不会给它加引号，于是：
+
+```
+target = "C:\Windows\System32\whoami.exe&echo+PWNED>%TEMP%\x.txt"
+        → 后半段被当作独立命令执行
+```
+
+**实测确认**（探针脚本，用完即删）：
+
+| payload | 结果 |
+| --- | --- |
+| `cmd /c echo a&b` | 输出 `a` + 报错 `'b' 不是内部或外部命令` → 证实 cmd 重新解析了 `&` |
+| `C:\nope.exe& echo PWNED > ...`（**含空格**） | 注入**未**生效 —— Node 给整段加了引号 |
+| `C:\Windows\System32\whoami.exe&echo+PWNED>...`（**无空格**） | **注入生效，marker 文件被创建，内容 `PWNED`** |
+
+**攻击面**：`target` 来自用户拖入的 `.url`/`.lnk`（`parseUrlFileRaw` 是纯文本解析、无校验）、
+以及导入的 `data.json`（只校验 `Array.isArray(json.shortcuts)`）。单击图标即可触发。
+
+**修法**：**删掉这两处 cmd 回退**。
+- `openExternalViaShell()` 改为失败就返回 `false`。`utools.shellOpenExternal` 本身就是系统级
+  `ShellExecute`，它失败说明协议没注册，cmd 也救不回来 —— 这个回退从来没有实际价值。
+- `launch()` 里那个 `try/catch` 包 `cp.spawn` 是**死代码**：`spawn` 对不存在的 exe 不同步抛错，
+  只异步 emit `'error'`。删掉后由既有的 `'error'` 处理器兜底到 `shellOpenPath`。
+
+**被否决的方案**：保留 cmd 但做元字符转义（`^` 前置）。否决理由 —— cmd 的引号/转义规则
+在 Windows 上有多套互相矛盾的解析器（CommandLineToArgvW 与 cmd 自己的），漏一个就是 RCE，
+不值得为一条本来就没用的回退承担这个风险。
+
+### 2. `data.json` 损坏 → 静默清空 → 真实数据被覆盖（🔴 数据丢失）
+
+**问题**：`readData()` 在 `JSON.parse` 失败时**返回 null**，而 `store.load()` 拿到 null 就
+`normalize(null)` 成完全空的 state —— 于是"**数据损坏**"和"**全新安装**"完全无法区分：
+
+1. 界面变成空面板，**没有任何提示**（`loadData` 不抛错，`store.load()` 的 catch 不触发）；
+2. 用户以为数据没了，随手加一个快捷方式；
+3. `saveNow()` 把空 state 写回 → 磁盘上那份真实数据（本机实测 **2,241,932 字节**）被覆盖。
+
+`.broken-<时间戳>` 备份其实一直有做，但用户不知道它存在，也没有任何恢复入口。
+
+**实测确认**：造一个截断的 `data.json`（2545 / 完整 3857 字节）→ `readData()` 返回 `null` →
+模拟"随手保存" → 文件变成 78 字节，原始内容只剩在 `.broken` 文件里。
+
+**修法**：
+- `readData()` 三态语义：**文件不存在/空文件 → `null`（全新安装，可写）**；
+  **正常 → 对象**；**存在但解析不了 → 抛 `code='DATA_CORRUPT'` 的错**（带 `backupPath`）。
+  同时去掉 `existsSync` + `readFileSync` 的两次 IO（中间被删会抛 ENOENT 走损坏分支，
+  生成一个空的 `.broken`），改成一次 `readFileSync` 按 `err.code === 'ENOENT'` 判断。
+- `store.js` 接住 `DATA_CORRUPT` → 置 `readOnly = true` → `saveNow()` **直接拒绝写入**并 toast
+  告知备份位置。新增 `KL.store.readOnly` / `corruptBackup` 供 UI 使用。
+
+### 3. `readImageAsDataUrl` 是任意文件读取原语（🔴 暴露面）
+
+名字叫"读图片"，实际 `fs.readFileSync(p)` 后直接 base64 返回 —— 传 `id_rsa`、浏览器 `Login Data`
+都会原样吐出，MIME 还被错标成 `image/png`。
+
+**修法**：两道闸 —— 扩展名白名单（png/jpg/jpeg/gif/bmp/webp/ico/svg）+ **文件头魔数校验**
+（不信任扩展名：改名的 `.exe` 的 `MZ` 头、`.txt` 伪装成 `.png` 都会被拒）。未知扩展名直接报错，
+不再猜成 png。
+
+### 4. `fetchFavicon` 可被页面牵着打内网（🟡 SSRF）
+
+`parseIconLinks` 只做 `new URL(href, base)`、**不校验同源**，重定向也不校验，于是
+"用户加一个外网网址"可以变成"本机替第三方去请求内网"（`169.254.169.254` 云元数据、
+`127.0.0.1` 管理接口、路由器 GET 型 reboot 等）。
+
+**修法**：新增 `isBlockedHost()`，在 `request()` 入口统一拦截（重定向递归调用的也是
+`request()`，因此自动覆盖）：`localhost`/`*.local`/`*.internal`、`127/8`、`10/8`、`172.16/12`、
+`192.168/16`、`169.254/16`、CGNAT `100.64/10`、`::1`、`fc00::/7`、`fe80::/10`；
+协议只允许 http/https。
+**不做 DNS 解析后再校验** —— 那会让每次抓图标多一次解析，且解析结果与实际连接用的可能不同。
+
+### 5. 子进程：写入失败静默挂起 + 无退出清理（🟡）
+
+- **stdin 写入不抛错**：向已退出的子进程 `write()` **不同步抛异常**，只返回 `false` 并把错误
+  交给 callback（实测确认）。原来只有 `try/catch`，于是"进程刚死、`'exit'` 还没派发"窗口期
+  进来的请求，JSON 根本没发出去，只能干等到超时（默认 180s、扫描 240s）—— 表现为"点了转圈好几分钟"。
+  修法：`write` 传 callback 立刻失败，并给 `agent.stdin` 挂 `'error'` 监听。
+- **`services.shutdown` 零调用方**：全项目搜索确认，插件关掉后常驻 PowerShell 可能还跑完 240s 的扫描。
+  修法：`process.on('exit'/'SIGTERM'/'SIGINT', stopAgent)`。
+  **注意不挂在 `onPluginOut` 上** —— 那是"失焦"不是"销毁"，每次切回来都重编译 C# 太亏。
+
+### 6. 其它
+
+- **日志轮转**：超 512KB 时原来 `writeFileSync(LOG_FILE, '')` **直接清空**，正好在最需要上下文的
+  时候（刚崩过）把证据删了。改为 `rename` 成 `.1` 保留一份。
+- **PS 失败被吞成"成功但零条"**：`resolvePaths` / `extractIcons` 在 PS 整体失败时返回
+  `{ok:true, items:[]}`，界面显示"添加了 0 项"，用户不知道是失败了。改为返回 `ok:false`，
+  `dialogs.ingestPaths` 补 `toast` 提示。
+- **`ui.js` 菜单项的 `it.icon` 未转义**：目前没有调用方传这个字段（死路径），但将来加图标
+  （尤其从 `data.json` 读的）就是 HTML 注入点。改为 `esc()`。
+- **`writeData`**：`.tmp` 固定名 → 带 `pid + 时间戳`（两个窗口同时保存会互相覆盖）；
+  补 `fsync`（rename 成功后内容可能还在 page cache，断电会得到"文件名对、内容空"的文件）。
+
+### 验证
+
+- 新增 `tools/preload-test.js`（**40 条断言**，Node 跑），已接入 `run-all-tests.sh`。
+  用两种手段：把 `preload.js` 里的纯函数（`readData` / `looksLikeImage` / `isBlockedHost`）
+  用 `vm` 抽出来跑真实逻辑；对数据读写跑真实临时文件。
+- **用 `git stash` 撤掉修复重跑 → 11 条变红**（cmd 回退 3 条、DATA_CORRUPT 相关 8 条），
+  装回修复后 40 条全 PASS。
+- 全量：**8 个浏览器测试 + 3 个 Node 测试全绿**
+  （uitest 16 / dedup 16 / tip 22 / layout 35 / grid-layout 47 / data 15 / folder 74+75 /
+  offline 12 / **preload 40** / release 全过）。
+
+> 未在真机 uTools 里复验。`preload.js` 改动需要**完全重启 uTools** 才生效（项目硬约定）。
+> 用户真实数据未被触碰：测试全部用 `os.tmpdir()` 下的临时目录。
+
+### 仍然存在、但本轮未处理
+
+- **`window.services = services` 在 contextBridge 之前无条件执行**。uTools 默认关闭
+  `contextIsolation`，此时渲染进程拿到的是 preload 世界的**原始对象**，
+  `window.services.log.constructor('return process')()` 可以拿到 Node 全权限。
+  这是 uTools 插件生态的普遍情况，改动它需要先确认 uTools 各版本的行为，风险与收益要单独评估。
+- **`launch(sc)` 仍接受渲染进程传入的任意 target/args**。彻底收口需要改成 `launch(shortcutId)`
+  由 preload 自己查 target，属于接口变更，留待单独一轮。
+- **UNC 网络路径无拦截**：拖入 `\\host\share\x.lnk` 会触发 SMB 连接（泄露 NTLM 哈希），
+  目标不可达时还会阻塞到 SMB 超时。企业共享盘是合理场景，需要先定策略。
+- **`data.json` 2.2MB 同步写**：图标以 base64 内联，每次保存都在渲染线程上同步写 2.2MB。
+  根治要把图标拆成独立文件，属于存储层改造。
+- **`ps-bridge.ps1` 的 `$ErrorActionPreference = 'Continue'`**：非终止错误不会被 catch，
+  可能返回 `ok=true` 但数据残缺。建议 PS 侧收集 `$Error` 作为 `warnings` 返回。
+- **`release.js` 只检查 `dist/` 里的 ps-bridge.ps1 编码，不检查源文件**。
+  建议在 `run-all-tests.sh` 里也加一份源文件检查（当前手工核实是达标的：BOM 存在、正文 0 非 ASCII）。
+
+---
+
 ## v1.8.1 — 目标丢失检测修好 + 合并导入不再丢文件夹内容（2026-10-22）
 
 ### 1. 目标丢失检测（红点）从来没生效过（修）

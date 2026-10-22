@@ -84,6 +84,7 @@ run_browser folder-无字      "$base/folder-test.html?labels=0" 13000
 
 echo "== Node 测试 =="
 run_node    offline-seo      tools/offline-test.js
+run_node    preload          tools/preload-test.js
 run_node    release          tools/release.js
 
 echo
