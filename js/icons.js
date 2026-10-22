@@ -322,12 +322,14 @@
 
     // 本地文件 / 快捷方式 / 文件夹 / UWP：
     // 优先用原始文件本身（.lnk 由 Shell 解析出它指定的图标），其次独立图标文件，最后目标
+    // 注意 launch.kind 是 path / url / appid，没有 'file'；这里原来写的是
+    // `l.kind === 'file'`，那一段永远不成立（死代码），现在按 path 判断。
     const op = sc.originalPath || ''
     const loc = parseIconLocation(sc.iconLocation)
     const cands = []
     if (op) cands.push(op)
     if (loc.path && loc.path !== op) cands.push(loc.path)
-    if (l.kind === 'file' && l.target && l.target !== op) cands.push(l.target)
+    if (l.kind === 'path' && l.target && l.target !== op) cands.push(l.target)
     for (const p of cands) {
       if (!p || !S.exists(p)) continue
       const d = await extractFromPath(p)

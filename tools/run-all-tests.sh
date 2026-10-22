@@ -78,6 +78,7 @@ run_browser dedup-test      "$base/dedup-test.html"
 run_browser tip-test        "$base/tip-test.html"
 run_browser layout-test     "$base/layout-test.html"
 run_browser grid-layout     "$base/grid-layout-test.html"
+run_browser data            "$base/data-test.html" 11000
 run_browser folder-有字      "$base/folder-test.html?labels=1" 13000
 run_browser folder-无字      "$base/folder-test.html?labels=0" 13000
 

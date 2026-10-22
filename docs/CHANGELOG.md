@@ -8,6 +8,75 @@
 
 ---
 
+## v1.8.1 — 目标丢失检测修好 + 合并导入不再丢文件夹内容（2026-10-22）
+
+### 1. 目标丢失检测（红点）从来没生效过（修）
+
+**问题**：README 一直写着「目标丢失检测（红点 + 一键清理）」，但 `js/grid.js` 的 `checkMissing()` 第一句是：
+
+```js
+if (sc.launch.kind !== 'file') continue
+```
+
+而 `launch.kind` 的取值只有 `path` / `url` / `appid`（见 `js/dialogs.js` 组装 launch 的三处）——
+**`'file'` 这个值从 v1.0.0 起就不存在**。于是每一条记录都在第一句被 `continue` 掉，
+红点检测一次都没跑过。
+
+**实证**（不是靠读代码推断）：本机真实数据 `%APPDATA%\uTools\shortcut-launcher\data.json` 里
+167 条快捷方式、149 条 `path`、126 个唯一本地目标，其中 **10 个目标已经不存在**，
+而 `missing=true` 的记录数是 **0**。
+
+**修法**：判断条件改成 `sc.launch.kind !== 'path'`。url 不是文件、appid 是
+`shell:AppsFolder\...` 虚拟路径，都不能用 `fs.existsSync` 判断，所以只对 `path` 生效。
+
+**顺带**：README 里「一键清理」是**从来没有实现过**的功能（全仓库搜不到任何批量清理入口），
+已从 README 删除，改成如实描述「红点 + 点击时提示是否删除」。
+
+### 2. 合并导入（「导入数据 → 合并」）后，文件夹里的图标全部消失（修）
+
+**问题**：`js/store.js` 的 `importJSON(data, 'merge')` 给每条记录换了新 id（`ns.id = uid('sc')`），
+但**只重映射了 `categoryId`，漏了 `parentId`**。于是文件夹内的图标 `parentId` 指向一个
+不存在的旧 id —— `inCategory()` 用 `!s.parentId` 过滤主网格，这些记录**既不进主网格、
+也不在任何文件夹里**，界面上彻底消失。数据还在磁盘上，但用户永远看不到、也点不到。
+
+触发场景很常见：换电脑 / 重装后用「导入数据 → 合并」恢复备份，恰好就是这条路径。
+
+**修法**：两趟处理 —— 第一趟换 id 并建立 `idMap[旧id] = 新id`，第二趟按 `idMap` 重挂 `parentId`
+（不依赖记录在数组里的先后顺序）。注意第一趟要同时记 `srcOf[i]`：跳过重复项后
+`added` 与 `data.shortcuts` 的下标会错位，直接按下标回查会挂错父级。
+
+**被否决的方案**：保留原 id 不换。否决理由 —— 合并的目的是和已有数据共存，
+保留原 id 一旦与库里已有 id 撞车（同一份备份导入两次就会），`getShortcut()` 会命中错误记录，
+比丢父子关系更难排查。
+
+### 3. `icons.js` 里同源的死代码（修）
+
+`iconSourceOf()` 之后那段候选路径收集里也写着 `l.kind === 'file'`，同样永不成立 ——
+也就是「目标本身作为图标来源」这条兜底路径一直没被走过。按 `path` 修正。
+
+### 4. 注释与代码不一致（修）
+
+`js/grid.js` 的 `innerMetrics()` 上方注释写「打分 `min(wFill, hFill) × (0.5 + 0.5·rowFill)`」，
+但代码（以及 `docs/CHANGELOG.md` 的 v1.8.0 第 12 条）都是 **`rowFill²`**。注释是 v1.8.0
+调参时留下的旧值，已改正。
+
+### 验证
+
+- 新增 `tools/data-test.html`（15 条断言），覆盖：目标不存在的 path 记录被标 missing /
+  存在的没被误标 / 网址记录不参与文件存在性检查 / DOM 上红点出现与不出现 /
+  合并导入后文件夹内仍是 2 项 / 内部项 parentId 指向新文件夹 / 无孤儿记录 /
+  子项没跑到主网格上 / 覆盖导入（replace）同样完好。
+- **用 `git stash` 撤掉修复重跑，5 条断言变红**（missing=false、无红点、
+  `count=0`、内部项名称为空、孤儿 2 条），装回修复后 15 条全 PASS ——
+  确认测试真的能抓住这两个 bug，不是摆设。
+- `bash tools/run-all-tests.sh`：8 个浏览器测试 + 2 个 Node 测试全绿
+  （uitest 16 / dedup 16 / tip 22 / layout 35 / grid-layout 47 / **data 15** / folder 74 + 75）。
+
+> 未在真机 uTools 里复验（改动都在渲染层逻辑，不涉及 preload / PowerShell 桥）。
+> 数据文件未被触碰：测试全部跑在 mock 模式的独立 `--user-data-dir` 里。
+
+---
+
 ## v1.8.0 — 名称改到格子下方 + 大文件夹整页翻动（2026-10-16 / 17）
 
 ### 1. 图标名称与文件夹标题都改到**格子下方**

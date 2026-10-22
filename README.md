@@ -24,7 +24,7 @@
 - **文件夹 / 大文件夹**：同一个容器的两种形态 —— 1×1 是小文件夹（点开弹层操作），调大成 m×n 就变成大文件夹（内部图标平铺、可直接点击）。文件夹可重命名、设背景色、单独切换**内部显示方式**（图标 / 列表）；内部的格子同样带格子背景与描边（和主网格共用同一套外观设置）。图标可拖入 / 拖出。文件夹的**标题与图标名称同一套逻辑**（位置都在格子下方、同样受名称开关控制，多带一个数量），大文件夹**内部不显示图标名称**（名称靠鼠标悬浮气泡），放不下时**滚轮整页翻动**（每页都是完整整行、**没有任何页标或悬浮控件**），**点任意空白处即可打开弹层**看全。
 - **外观**：图标格子大小 / 圆角 / 侧边栏宽度 / 图标文字开关均可调；图标格子支持**背景色（含不透明度调节）**与**描边（颜色 + 粗细）**；文件夹内图标大小可选 小 / 中 / 大 / 与主格一致。
 - **无字模式的名称气泡**：隐藏图标文字后，光标停在图标上会在光标处弹出一个小气泡显示名称（跟着光标走，靠边自动翻向，按住鼠标拖拽/框选时不弹）。大文件夹内部的图标**一律**不显示名称，所以那里的气泡不受"显示/隐藏名称"开关影响。
-- **其他**：全局搜索（`Ctrl+F`，打开插件后直接敲键盘即可搜索）、右键菜单、目标丢失检测（红点 + 一键清理）、数据导入/导出、深/浅色跟随 uTools 主题、单击/双击打开、启动参数与工作目录；设置面板从**左下角**弹出，不遮挡图标区。
+- **其他**：全局搜索（`Ctrl+F`，打开插件后直接敲键盘即可搜索）、右键菜单、目标丢失检测（图标右上角红点，点击时提示是否删除该快捷方式）、数据导入/导出、深/浅色跟随 uTools 主题、单击/双击打开、启动参数与工作目录；设置面板从**左下角**弹出，不遮挡图标区。
 
 > 面向用户的完整说明见 **[docs/使用手册.md](docs/使用手册.md)**。
 
@@ -81,6 +81,7 @@ utools-shortcut-launcher/
 │   ├── layout-test.html   # 布局回归测试（自动对齐 / 自由摆放 / 批量摆放）
 │   ├── folder-test.html   # 大文件夹回归测试（整页翻动 / 无页标 / 无名称 / 点空白处打开）
 │   ├── grid-layout-test.html # 主网格回归测试（图标/格子/名称的尺寸与位置）
+│   ├── data-test.html     # 数据层回归测试（目标丢失检测 / 合并导入的父子关系）
 │   ├── run-all-tests.sh   # 一键跑完全部回归测试（下面那些命令它都替你发了）
 │   ├── offline-test.js    # 联网开关自测（源码级验证 fetchFavicon 的离线闸门）
 │   ├── selftest.js        # 桥接层自测（图标/lnk/应用扫描）
@@ -144,7 +145,7 @@ node tools/release.js      # 生成 dist/ 并逐项做合规检查
 # 桥接层自测（需 Windows + PowerShell）
 node tools/selftest.js
 
-# 一键跑完所有回归测试（7 个浏览器测试 + 2 个 Node 测试，推荐）
+# 一键跑完所有回归测试（8 个浏览器测试 + 2 个 Node 测试，推荐）
 bash tools/run-all-tests.sh
 
 # ---------------------------------------------------------------
@@ -183,14 +184,19 @@ chrome --headless=new --allow-file-access-from-files --virtual-time-budget=9000 
 chrome --headless=new --allow-file-access-from-files --virtual-time-budget=9000 \
   --dump-dom "file:///<repo>/tools/grid-layout-test.html"
 
+# 数据层回归测试：目标丢失检测（红点）/ 合并导入后文件夹的父子关系
+chrome --headless=new --allow-file-access-from-files --virtual-time-budget=11000 \
+  --dump-dom "file:///<repo>/tools/data-test.html"
+
 # 联网开关自测（Node，不需要浏览器）
 node tools/offline-test.js
 ```
 
 `tools/uitest.html`、`tools/dedup-test.html`、`tools/tip-test.html`、`tools/layout-test.html`、
-`tools/folder-test.html` 都直接 iframe 引入 `../index.html`，断言结果写在 `document.title` 里，
-用 `--dump-dom` 回读即可；不复制页面结构，所以页面改了测试不会悄悄失效。
-`dedup-test.html` 会临时替换 iframe 里的 `window.services.resolvePaths` 喂假数据，跑完在
+`tools/data-test.html`、`tools/folder-test.html` 都直接 iframe 引入 `../index.html`，断言结果写在
+`document.title` 里，用 `--dump-dom` 回读即可；不复制页面结构，所以页面改了测试不会悄悄失效。
+`dedup-test.html` 会临时替换 iframe 里的 `window.services.resolvePaths` 喂假数据，`data-test.html`
+同理替换 `window.services.exists`（mock 模式里它恒返回 true），跑完在
 in-memory 的 mock 数据里留下几条测试条目 —— 用单独的 `--user-data-dir` 跑即可，别拿它去动真实数据。
 
 > `--allow-file-access-from-files` 不能省：`file://` 下 iframe 与父页属于不同 origin，没有这个参数

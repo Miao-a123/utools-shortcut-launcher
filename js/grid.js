@@ -501,7 +501,7 @@
          wFill   = 横向占用 / 内部宽度
          hFill   = 纵向占用 / 内部高度
          rowFill = 末行图标数 / 列数（越小说明末行越瘪，越难看）
-       打分 min(wFill, hFill) × (0.5 + 0.5·rowFill)，取最高；
+       打分 min(wFill, hFill) × rowFill²，取最高；
        并列时优先列数多（横向读起来更顺）。
        用 min(两个方向) 而不是面积：面积分不出"铺满但形状怪"——实测出现过
        2×3 的文件夹里 5 个图标被排成一列（竖向 100%、横向 37%，面积分反而最高）。
@@ -1460,11 +1460,17 @@
   /* ---------------- missing check ---------------- */
 
   let missingTimer = null
+  /* 只检查「本地文件类」目标。launch.kind 的取值是 path / url / appid（见 dialogs.js
+     的 launch 组装处），**没有 'file'** —— 这里曾经写成 `kind !== 'file'`，
+     于是所有条目都被 continue 掉，红点检测从来没生效过（真实数据里 126 个本地目标
+     有 10 个已失效，却一个红点都没有）。
+     url 与 appid 无法用 fs.existsSync 判断（url 不是文件、appid 是 shell:AppsFolder 虚拟路径），
+     所以只对 path 生效。 */
   function checkMissing (list) {
     if (missingTimer) clearTimeout(missingTimer)
     missingTimer = setTimeout(() => {
       for (const sc of list) {
-        if (sc.launch.kind !== 'file') continue
+        if (sc.launch.kind !== 'path') continue
         if (!sc.launch.target) continue
         const exists = S.exists(sc.launch.target)
         if (!!sc.missing !== !exists) {

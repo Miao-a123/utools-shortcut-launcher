@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>data-test</title>
+  <style>
+    body { margin: 0; font: 12px/1.6 monospace; background: #fff; color: #111 }
+    #frame { width: 900px; height: 640px; border: 1px solid #ccc; display: block }
+    #log { padding: 8px 10px; white-space: pre-wrap }
+  </style>
+</head>
+<body>
+  <p style="font-size:12px;margin:6px 10px">数据层回归测试（目标丢失检测 / 合并导入的父子关系） ——
+    无头运行：<code>chrome --headless=new --allow-file-access-from-files --virtual-time-budget=9000 --dump-dom "tools/data-test.html"</code>，结果写在 &lt;title&gt;。</p>
+  <iframe id="frame"></iframe>
+  <div id="log"></div>
+  <script>
+  /* 这两个 bug 都曾经在真实数据上成立、而且测试零覆盖：
+     1) checkMissing() 判断 `sc.launch.kind !== 'file'`，但 launch.kind 只有 path/url/appid，
+        所以目标丢失检测（红点）从来没生效过。
+     2) importJSON() 合并导入时给每条记录换了新 id，却没重映射 parentId，
+        于是文件夹里的图标全变成孤儿 —— 不进主网格、也不在任何文件夹里，界面上彻底消失。
+     下面每条断言都验证过"撤掉修复会红"。 */
+  var frame = document.getElementById('frame')
+  frame.src = '../index.html?theme=dark'
+  frame.addEventListener('load', function () { setTimeout(run, 900) })
+
+  function run () {
+    var out = []
+    function ok (n, c, x) { out.push((c ? 'PASS' : 'FAIL') + ':' + n + (x !== undefined ? '[' + x + ']' : '')) }
+    try {
+      var W = frame.contentWindow, D = frame.contentDocument, KL = W.KL
+      if (!KL || !KL.grid || !KL.store) { out.push('ERROR:KL 未加载'); return finish(out) }
+      var store = KL.store
+
+      /* ================= 一、目标丢失检测 ================= */
+      /* mock 模式（浏览器预览）里 window.services.exists 是桩，恒返回 true，
+         所以这里像 dedup-test.html 替换 resolvePaths 那样，临时换成"真的去问一下"
+         的实现 —— 否则测不到任何东西。 */
+      var realExists = W.services.exists
+      W.services.exists = function (p) {
+        return String(p).indexOf('__kl_test_not_here__') < 0
+      }
+
+      store.reset()
+      KL.grid.setCategory('all')
+
+      // 造一条目标绝对不存在的 path 快捷方式
+      var bad = store.addShortcut({
+        name: '目标不存在',
+        launch: { kind: 'path', target: 'C:\\__kl_test_not_here__\\nope.exe' }
+      })
+      // 再造一条目标真实存在的（用 index.html 自己的路径，一定存在）
+      var good = store.addShortcut({
+        name: '目标存在',
+        launch: { kind: 'path', target: D.location.href.replace(/^file:\/\/\//, '').replace(/\//g, '\\') }
+      })
+      // 网址类不该被当成文件去 existsSync
+      var url = store.addShortcut({
+        name: '网址',
+        launch: { kind: 'url', target: 'https://example.com/' }
+      })
+
+      KL.grid.render()
+
+      // checkMissing 里是 400ms 的防抖定时器，等它跑完
+      setTimeout(function () {
+        try {
+          var b = store.getShortcut(bad.id)
+          var g = store.getShortcut(good.id)
+          var u = store.getShortcut(url.id)
+
+          ok('目标不存在的 path 记录被标记 missing', b && b.missing === true, 'missing=' + (b && b.missing))
+          ok('目标存在的 path 记录没有被误标', g && g.missing === false, 'missing=' + (g && g.missing))
+          ok('网址记录不参与文件存在性检查', u && u.missing === false, 'missing=' + (u && u.missing))
+
+          // DOM 上的红点
+          var bTile = D.querySelector('.tile[data-id="' + bad.id + '"]')
+          var gTile = D.querySelector('.tile[data-id="' + good.id + '"]')
+          ok('不存在的目标有红点', !!(bTile && bTile.querySelector('.badge')))
+          ok('存在的目标没有红点', !!(gTile && !gTile.querySelector('.badge')))
+
+          /* ================= 二、合并导入的父子关系 ================= */
+          store.reset()
+          KL.grid.setCategory('all')
+
+          var folder = store.createFolder({ name: '资料夹', col: 2, row: 2 })
+          store.addShortcut({ name: '内部A', parentId: folder.id, launch: { kind: 'path', target: 'C:\\t\\a.exe' } })
+          store.addShortcut({ name: '内部B', parentId: folder.id, launch: { kind: 'path', target: 'C:\\t\\b.exe' } })
+          ok('导入前文件夹里有 2 项', store.childCount(folder.id) === 2, 'count=' + store.childCount(folder.id))
+
+          var backup = store.exportJSON()
+          store.reset()                              // 模拟换电脑：先清空
+          ok('清空后没有快捷方式', store.shortcuts.length === 0, 'len=' + store.shortcuts.length)
+
+          store.importJSON(JSON.parse(backup), 'merge')
+
+          var folders = store.shortcuts.filter(function (s) { return s.kind === 'folder' })
+          ok('合并导入后有 1 个文件夹', folders.length === 1, 'folders=' + folders.length)
+
+          if (folders.length === 1) {
+            var f = folders[0]
+            ok('合并导入后文件夹里仍有 2 项', store.childCount(f.id) === 2, 'count=' + store.childCount(f.id))
+            var names = store.childrenOf(f.id).map(function (k) { return k.name }).sort().join(',')
+            ok('内部项名称正确', names === '内部A,内部B', names)
+            ok('内部项的 parentId 指向新文件夹 id', store.childrenOf(f.id).every(function (k) { return k.parentId === f.id }))
+          }
+
+          // 关键性质：任何记录都必须"可达" —— 要么在主网格，要么父文件夹真实存在
+          var ids = {}
+          store.shortcuts.forEach(function (s) { ids[s.id] = 1 })
+          var orphans = store.shortcuts.filter(function (s) { return s.parentId && !ids[s.parentId] })
+          ok('没有父文件夹不存在的孤儿记录', orphans.length === 0,
+            orphans.length ? orphans.map(function (o) { return o.name }).join(',') : '0')
+
+          // 主网格能看到文件夹；子项不该跑到主网格上
+          var gridList = store.visible('all', '')
+          ok('主网格能看到文件夹', gridList.some(function (s) { return s.kind === 'folder' }), 'grid=' + gridList.length)
+          ok('子项没有跑到主网格上', !gridList.some(function (s) { return s.name === '内部A' || s.name === '内部B' }),
+            gridList.map(function (s) { return s.name }).join(','))
+
+          /* 覆盖导入（replace）本来就走 normalize，父子关系应当完好 —— 加一条防止将来改坏 */
+          store.reset()
+          store.importJSON(JSON.parse(backup), 'replace')
+          var rf = store.shortcuts.filter(function (s) { return s.kind === 'folder' })[0]
+          ok('覆盖导入后文件夹里仍有 2 项', !!rf && store.childCount(rf.id) === 2,
+            rf ? 'count=' + store.childCount(rf.id) : '无文件夹')
+        } catch (e2) {
+          out.push('ERROR:' + (e2 && e2.message))
+        }
+        finish(out)
+      }, 1200)
+    } catch (e) {
+      out.push('ERROR:' + (e && e.message))
+      finish(out)
+    }
+  }
+
+  function finish (out) {
+    var failed = 0
+    out.forEach(function (l) { if (l.indexOf('PASS') !== 0) failed++ })
+    var txt = (failed ? ('FAILED ' + failed + ' | ') : 'ALL PASS | ') + out.join('  ')
+    document.getElementById('log').textContent = txt
+    document.title = txt
+  }
+  </script>
+</body>
+</html>

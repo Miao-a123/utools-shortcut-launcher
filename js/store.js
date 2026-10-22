@@ -578,14 +578,29 @@
         if (cats[c.name]) catMap[c.id] = cats[c.name]
         else { const nc = addCategory(c.name, c.color); catMap[c.id] = nc.id }
       }
+      /* 合并导入时每条记录都要换新 id（避免和已有记录撞 id），但**父子关系必须跟着重映射**。
+         这里踩过坑：只换了 ns.id 却没换 parentId，于是文件夹内的图标指向一个不存在的旧 id ——
+         inCategory() 用 `!s.parentId` 过滤主网格，这些记录既不进主网格、也不在任何文件夹里，
+         界面上彻底消失（数据还在，只是永远看不见）。categoryId 一直是重映射的，parentId 漏了。 */
       const added = []
+      const srcOf = []                       // added[i] 对应的原始记录（跳过重复项后下标会错位）
+      const idMap = {}                       // 旧 id → 新 id
       for (const s of (data.shortcuts || [])) {
         const t = String((s.launch || {}).target || '').toLowerCase()
         if (t && existing[t]) continue
         const ns = normalizeShortcut(s)
         ns.id = uid('sc')
+        if (s.id) idMap[s.id] = ns.id
         ns.categoryId = catMap[s.categoryId] || null
         added.push(ns)
+        srcOf.push(s)
+      }
+      // 第二趟再挂父级：此时 idMap 已经完整，且不依赖记录在数组里的先后顺序
+      for (let i = 0; i < added.length; i++) {
+        const src = srcOf[i]
+        const ns = added[i]
+        if (!src || !ns.parentId) continue
+        ns.parentId = idMap[src.parentId] || null
       }
       state.shortcuts.push.apply(state.shortcuts, added)
     }
