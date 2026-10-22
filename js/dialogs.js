@@ -8,9 +8,17 @@
   const toast = KL.ui.toast
   const ICONS = KL.ui.ICONS
 
-  const VERSION = '1.8.4'
+  const VERSION = '1.8.5'
   const REPO_URL = 'https://github.com/Miao-a123/utools-shortcut-launcher'
   const CHANGELOG = [
+    {
+      v: '1.8.5',
+      date: '2026-10-23',
+      items: [
+        '修复（**重要**）：以「插件包」形式安装时，拖入文件 / 文件夹会报「解析失败」、图标也出不来 —— 原因是系统组件读不到安装包里的 PowerShell 脚本。现在启动时会自动把脚本释放到数据目录再调用，打包安装和源码目录加载都能正常工作',
+        '说明：这一条只影响「打包安装」的场景；如果你一直用开发者模式指向源码目录，之前的版本不受影响'
+      ]
+    },
     {
       v: '1.8.4',
       date: '2026-10-22',

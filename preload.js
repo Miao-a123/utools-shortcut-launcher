@@ -24,7 +24,50 @@ const BASE_DIR = path.join(safeGetPath('userData', path.join(os.homedir(), '.uto
 const DATA_FILE = path.join(BASE_DIR, 'data.json')
 const TMP_DIR = path.join(BASE_DIR, 'tmp')
 const LOG_FILE = path.join(BASE_DIR, 'plugin.log')
-const PS_SCRIPT = path.join(__dirname, 'tools', 'ps-bridge.ps1')
+
+/* ps-bridge.ps1 的路径 —— 必须是一个 **外部 PowerShell 进程能读到的真实文件**。
+
+   ⚠️ 坑（上架时报错过）：插件以 **.asar 包**安装时，`__dirname` 是
+   `...\plugins\<hash>.asar`，而 Node 的 fs 之所以能读 asar 内的文件，是靠 Electron
+   在 preload 里打的 asar 补丁 —— **powershell.exe 是另一个进程，没有这个补丁**，
+   它会直接报「-File 形式参数的实际参数 ... 不存在」，于是图标提取 / .lnk 解析 / 应用扫描
+   全部失效（拖入图标时弹"解析失败"）。
+   以前一直用「源码目录」加载所以没暴露；一旦按官方要求打包成 asar 安装就必然踩到。
+
+   解决：如果脚本位于 .asar 内，就在启动时用 Node 的 fs（**有** asar 补丁）把内容读出来，
+   写到 BASE_DIR 下一个真实路径，再把那个路径交给 PowerShell。
+   内容用哈希对比，脚本没变就不重复写盘。 */
+const PS_SCRIPT_IN_PACKAGE = path.join(__dirname, 'tools', 'ps-bridge.ps1')
+const PS_SCRIPT_EXTRACTED = path.join(BASE_DIR, 'ps-bridge.ps1')
+let PS_SCRIPT = PS_SCRIPT_IN_PACKAGE     // 由 resolvePsScript() 在 ensureDirs 后改写
+
+function fileHash (buf) {
+  try { return require('crypto').createHash('sha1').update(buf).digest('hex') } catch (e) { return '' }
+}
+
+/* 算出真正可用的 ps-bridge.ps1 路径。若是普通文件就直接返回，否则解压到 BASE_DIR。 */
+function resolvePsScript () {
+  if (PS_SCRIPT_IN_PACKAGE.indexOf('.asar' + path.sep) < 0) {
+    PS_SCRIPT = PS_SCRIPT_IN_PACKAGE       // 开发目录加载：直接用
+    return PS_SCRIPT
+  }
+  try {
+    const buf = fs.readFileSync(PS_SCRIPT_IN_PACKAGE)   // preload 里的 fs 能读 asar
+    const want = fileHash(buf)
+    let cur = ''
+    try { if (fs.existsSync(PS_SCRIPT_EXTRACTED)) cur = fileHash(fs.readFileSync(PS_SCRIPT_EXTRACTED)) } catch (e) {}
+    if (cur !== want) {
+      ensureDirs()
+      fs.writeFileSync(PS_SCRIPT_EXTRACTED, buf)        // 保留原字节（含 UTF-8 BOM）
+    }
+    PS_SCRIPT = PS_SCRIPT_EXTRACTED
+  } catch (e) {
+    // 解压失败就退回原路径（至少开发目录下还能用），并记日志便于排查
+    PS_SCRIPT = PS_SCRIPT_IN_PACKAGE
+    try { log('resolvePsScript failed', e.message) } catch (e2) {}
+  }
+  return PS_SCRIPT
+}
 
 function ensureDirs () {
   for (const d of [BASE_DIR, TMP_DIR]) {
@@ -72,6 +115,7 @@ const agentPending = new Map()
 
 function startAgent () {
   if (agent && !agent.killed && agent.exitCode === null) return agent
+  resolvePsScript()      // 确保 PS_SCRIPT 指向真实可读文件（asar 安装时需解压）
   try {
     agent = cp.spawn(
       'powershell.exe',
@@ -165,6 +209,7 @@ function agentCall (mode, payload, timeout) {
 function oneShot (mode, payload, timeout) {
   return new Promise(resolve => {
     ensureDirs()
+    resolvePsScript()    // 同上：asar 安装时把脚本解压到真实路径
     const stamp = Date.now() + '_' + Math.random().toString(36).slice(2)
     const inFile = path.join(TMP_DIR, 'in_' + stamp + '.json')
     const outFile = path.join(TMP_DIR, 'out_' + stamp + '.json')

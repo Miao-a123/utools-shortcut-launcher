@@ -8,6 +8,56 @@
 
 ---
 
+## v1.8.5 — 打包安装时 PowerShell 桥失效（asar 兼容）（2026-10-23）
+
+### 问题
+
+用户报：**以插件包形式安装后，拖入文件 / 文件夹弹「解析失败」**，错误长这样：
+
+```
+解析失败：Command failed: powershell.exe ... -File
+  C:\Users\...\plugins\de6d...0f0c.asar\tools\ps-bridge.ps1 -Mode resolve ...
+-File 形式参数的实际参数 ...\de6d...0f0c.asar\tools\ps-bridge.ps1 不存在。
+请提供一个 .ps1 文件的路径作为 -File 形式参数的实际参数。
+```
+
+**根因**（不是脚本内容坏了，也不是这一轮改坏的 —— `PS_SCRIPT` 那行从 v1.0.0 起就没动过，
+`git log -S` 可查）：插件打包成 `.asar` 安装后，`__dirname` 变成 `...\plugins\<hash>.asar`。
+Node 的 `fs` 能读 asar 内的文件，是因为 **Electron 在 preload 里打了 asar 补丁**；
+而 `powershell.exe` 是**另一个进程**，没有这个补丁，它看到的是一个不存在的路径 → 直接报错。
+于是图标提取 / `.lnk` 解析 / 应用扫描全部失效。
+
+以前一直用「开发者模式指向源码目录」加载（真实文件路径），所以这个坑没暴露；
+一旦按官方要求打包成 asar 安装，就必然踩到 —— **这是上架的硬伤**，必须修。
+
+### 修法
+
+新增 `resolvePsScript()`：在 `startAgent()` / `oneShot()` 真正用到脚本之前调一次。
+
+- 脚本路径不含 `.asar`（开发者目录加载）→ 直接用原路径，**不做任何复制**；
+- 脚本在 `.asar` 内 → 用 Node 的 `fs`（**有** asar 补丁）读出内容，写到
+  `BASE_DIR/ps-bridge.ps1`（用户数据目录，是真实文件，PowerShell 读得到），再把该路径交给 `powershell.exe`；
+- 用 SHA-1 对比内容：**脚本没变就不重复写盘**（避免每次启动都写一次）；
+- 写入保留原始字节（含 UTF-8 BOM —— 否则 PowerShell 5.1 按 ANSI 解码，中文正则会乱码，见项目硬约定）。
+
+### 验证
+
+- 新增 `tools/ps-script-test.js`（**11 条断言**），已接入 `run-all-tests.sh`。用 `vm` 抽出
+  `resolvePsScript` / `fileHash`，模拟 asar 环境跑：
+  - 脚本在 `.asar` 内 → 解压到 BASE_DIR、**逐字节一致**、**BOM 保留**；
+  - 内容未变 → **不重复写盘**（比对 mtime）；源内容变化 → 重新解压；
+  - 开发者目录 → 用原路径、不往 BASE_DIR 复制。
+- **端到端实测**：把 `tools/ps-bridge.ps1` 按字节复制到临时目录（模拟解压），
+  用 `powershell.exe -File ... -Mode resolve` 真跑一次 → 退出码 0，返回正确 JSON。
+- **用 `git stash` 撤掉 preload 修复重跑 → `ps-script-test` 明确变红**（两个函数缺失），装回后 11 条全 PASS。
+- 全量：**9 个浏览器测试 + 5 个 Node 测试全绿**。
+
+> 未在真机 uTools 的 asar 安装下复验（本机是源码目录加载）。解压 → PowerShell 读取这一段
+> 已用真实进程端到端验证；asar 内读取那一段依赖 uTools preload 里已加载的 asar 补丁（与
+> `readData` 读 asar 是同一机制，项目一直在用）。
+
+---
+
 ## v1.8.4 — grid.js 深审：选择集泄漏 / 角标被抹 / XSS / 性能（2026-10-22）
 
 对 `js/grid.js`（约 1900 行，布局核心）做了一次逐段通读 + 跨文件核对契约。
