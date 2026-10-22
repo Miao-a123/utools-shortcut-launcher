@@ -307,11 +307,11 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
    所以 .tile.tall / .tile.wide 不去动 .label 的定位。 */
 .tile-name-fill { display: none; }
 
-/* 关掉名称时 .grid.hide-labels .tile 会把 gap 设为 0；拉长的格子里有图标 + 名称
-   两段内容，得把间距要回来（选择器权重与它相同，靠位置在后面生效）。 */
-.grid .tile.tall { justify-content: flex-start; gap: 6px; }
-.grid .tile.wide { flex-direction: row; justify-content: flex-start; gap: 8px; }
-
+/* 拉长格子里「图标 + 格内名称」两段内容的间距。
+   ⚠️ 特异度坑：`.grid .tile.tall` 与下面 `.grid.hide-labels .tile { gap: 0 }` 都是
+   3 个 class（0,3,0），平局按**源码顺序**决定 —— 所以这两条必须写在它**之后**才生效。
+   以前它们写在前、注释还写着"靠位置在后面生效"（把顺序说反了），实际效果是
+   无字模式下 gap 被覆盖成 0，图标和格内名称贴在一起。 */
 .grid .tile.tall .tile-name-fill,
 .grid .tile.wide .tile-name-fill {
   display: -webkit-box;
@@ -326,6 +326,10 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
 
 .grid.hide-labels .tile .label { display: none; }
 .grid.hide-labels .tile { gap: 0; }
+
+/* 必须放在上面 `gap: 0` **之后**（同特异度，靠顺序取胜） */
+.grid .tile.tall { justify-content: flex-start; gap: 6px; }
+.grid .tile.wide { flex-direction: row; justify-content: flex-start; gap: 8px; }
 
 /* ---------------- folders ---------------- */
 

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>grid-behavior-test</title>
+  <style>
+    body { margin: 0; font: 12px/1.6 monospace; background: #fff; color: #111 }
+    #frame { width: 900px; height: 640px; border: 1px solid #ccc; display: block }
+    #log { padding: 8px 10px; white-space: pre-wrap }
+  </style>
+</head>
+<body>
+  <p style="font-size:12px;margin:6px 10px">grid.js 行为回归测试（选择集裁剪 / 文件夹角标 / 名称转义 / 内层 resize 上限 / CSS 特异性） ——
+    无头运行：<code>chrome --headless=new --allow-file-access-from-files --virtual-time-budget=11000 --dump-dom "tools/grid-behavior-test.html"</code>，结果写在 &lt;title&gt;。</p>
+  <iframe id="frame"></iframe>
+  <div id="log"></div>
+  <script>
+  /* 这里每条断言都对应一个真实存在过、且测试零覆盖的缺陷：
+     1. 搜索/切分类后 selected 不裁剪 → 批量删除会连看不见的图标一起删掉（会丢数据）
+     2. refreshTile 用 textContent 覆盖 label → 文件夹的数量角标消失
+     3. folderLabel 把 sc.name 塞进 innerHTML → 名称里的 HTML 会被执行
+     4. attachInnerResize 没有列数上限 → 内层格子撑出文件夹被裁
+     5. 无字模式下拉长格子的 gap 被 .grid.hide-labels .tile 覆盖成 0
+     6. checkMissing 只看顶层 → 文件夹内图标的红点永远不生效
+   */
+  var frame = document.getElementById('frame')
+  frame.src = '../index.html?theme=dark'
+  frame.addEventListener('load', function () { setTimeout(run, 900) })
+
+  function run () {
+    var out = []
+    function ok (n, c, x) { out.push((c ? 'PASS' : 'FAIL') + ':' + n + (x !== undefined ? '[' + x + ']' : '')) }
+    try {
+      var W = frame.contentWindow, D = frame.contentDocument, KL = W.KL
+      if (!KL || !KL.grid || !KL.store) { out.push('ERROR:KL 未加载'); return finish(out) }
+      var store = KL.store
+
+      /* ============ 1. 选择集裁剪（会丢数据的那条） ============ */
+      store.reset()
+      KL.grid.setCategory('all')
+      var a = store.addShortcut({ name: '苹果', launch: { kind: 'path', target: 'C:\\a.exe' } })
+      var b = store.addShortcut({ name: '香蕉', launch: { kind: 'path', target: 'C:\\b.exe' } })
+      var c = store.addShortcut({ name: '橘子', launch: { kind: 'path', target: 'C:\\c.exe' } })
+      KL.grid.render()
+
+      KL.grid.selectAll()
+      ok('全选选中 3 项', KL.grid.selectedIds().length === 3, KL.grid.selectedIds().length)
+
+      KL.grid.setKeyword('苹果')
+      ok('搜索后屏幕上只有 1 项', store.visible('all', '苹果').length === 1)
+      ok('搜索后选择集被裁剪到可见范围', KL.grid.selectedIds().length === 1,
+        'selected=' + KL.grid.selectedIds().length)
+
+      // 真正的危害：按右键菜单拿到的 ids 去删，不该波及隐藏项
+      var before = store.shortcuts.length
+      store.removeShortcuts(KL.grid.selectedIds())
+      var after = store.shortcuts.length
+      ok('删除只影响可见的 1 项（隐藏项不受牵连）', before - after === 1, before + ' -> ' + after)
+      ok('隐藏项仍在', !!store.shortcuts.filter(function (s) { return s.name === '香蕉' }).length &&
+        !!store.shortcuts.filter(function (s) { return s.name === '橘子' }).length)
+
+      // 搜索态下 Ctrl+A 不该把范围外的并进来
+      store.reset()
+      KL.grid.setCategory('all')
+      store.addShortcut({ name: '西瓜', launch: { kind: 'path', target: 'C:\\d.exe' } })
+      store.addShortcut({ name: '葡萄', launch: { kind: 'path', target: 'C:\\e.exe' } })
+      KL.grid.render()
+      KL.grid.setKeyword('西瓜')
+      KL.grid.selectAll()
+      ok('搜索态下 Ctrl+A 只选可见项', KL.grid.selectedIds().length === 1, KL.grid.selectedIds().length)
+      KL.grid.setKeyword('')
+
+      /* ============ 2. refreshTile 不能抹掉文件夹数量角标 ============ */
+      store.reset()
+      KL.grid.setCategory('all')
+      var folder = store.createFolder({ name: '资料夹', col: 2, row: 2 })
+      store.addShortcut({ name: '内部1', parentId: folder.id, launch: { kind: 'path', target: 'C:\\i1.exe' } })
+      store.addShortcut({ name: '内部2', parentId: folder.id, launch: { kind: 'path', target: 'C:\\i2.exe' } })
+      KL.grid.render()
+
+      var ftile = D.querySelector('.tile.folder[data-id="' + folder.id + '"]')
+      ok('文件夹 tile 渲染出来了', !!ftile)
+      var countBefore = ftile ? ftile.querySelector('.label .label-count') : null
+      ok('文件夹标题带数量角标', !!countBefore, countBefore ? countBefore.textContent : '无')
+
+      KL.grid.refreshTile(folder.id)
+      var countAfter = ftile ? ftile.querySelector('.label .label-count') : null
+      ok('refreshTile 之后数量角标仍在', !!countAfter, countAfter ? countAfter.textContent : '已被抹掉')
+      var nameAfter = ftile ? ftile.querySelector('.label .label-name') : null
+      ok('refreshTile 之后名称仍正确', !!nameAfter && nameAfter.textContent === '资料夹',
+        nameAfter ? nameAfter.textContent : '无')
+
+      /* ============ 3. 名称必须转义（不能把 HTML 当结构） ============ */
+      store.reset()
+      KL.grid.setCategory('all')
+      var evil = store.createFolder({ name: '<img src=x onerror="window.__xss=1">', col: 2, row: 2 })
+      KL.grid.render()
+      var etile = D.querySelector('.tile.folder[data-id="' + evil.id + '"]')
+      var ename = etile ? etile.querySelector('.label .label-name') : null
+      ok('恶意名称被当成纯文本渲染', !!ename && ename.textContent.indexOf('<img') === 0,
+        ename ? ename.textContent.slice(0, 30) : '无')
+      ok('名称里没有生成真实的 img 元素', !ename || !ename.querySelector('img'))
+      ok('onerror 没有被执行', W.__xss === undefined, 'xss=' + W.__xss)
+
+      /* ============ 4. 无字模式下拉长格子的 gap 不能被吃掉 ============ */
+      store.reset()
+      KL.grid.setCategory('all')
+      var tall = store.addShortcut({ name: '竖条', col: 1, row: 3, launch: { kind: 'path', target: 'C:\\t.exe' } })
+      var wide = store.addShortcut({ name: '横条', col: 3, row: 1, launch: { kind: 'path', target: 'C:\\w.exe' } })
+      var plain = store.addShortcut({ name: '普通', col: 1, row: 1, launch: { kind: 'path', target: 'C:\\p.exe' } })
+      store.setSetting('showLabels', false)
+      KL.grid.render()
+      var gt = D.querySelector('.tile[data-id="' + tall.id + '"]')
+      var gw = D.querySelector('.tile[data-id="' + wide.id + '"]')
+      var gp = D.querySelector('.tile[data-id="' + plain.id + '"]')
+      ok('无字模式：竖条保留 gap', gt && W.getComputedStyle(gt).gap !== '0px',
+        gt ? W.getComputedStyle(gt).gap : '无')
+      ok('无字模式：横条保留 gap', gw && W.getComputedStyle(gw).gap !== '0px',
+        gw ? W.getComputedStyle(gw).gap : '无')
+      ok('无字模式：普通格子 gap 收为 0', gp && W.getComputedStyle(gp).gap === '0px',
+        gp ? W.getComputedStyle(gp).gap : '无')
+      store.setSetting('showLabels', true)
+      KL.grid.render()
+
+      /* ============ 5. 文件夹内图标的红点也要能检测到 ============ */
+      // mock 里 services.exists 恒返回 true，这里替换成"只有 __gone__ 不存在"
+      var realExists = W.services.exists
+      W.services.exists = function (p) { return String(p).indexOf('__gone__') < 0 }
+      store.reset()
+      KL.grid.setCategory('all')
+      var f2 = store.createFolder({ name: '有坏项', col: 2, row: 2 })
+      var bad = store.addShortcut({ name: '坏内部项', parentId: f2.id, launch: { kind: 'path', target: 'C:\\__gone__\\x.exe' } })
+      KL.grid.render()
+
+      setTimeout(function () {
+        try {
+          var bs = store.getShortcut(bad.id)
+          ok('文件夹内部的失效目标被标记 missing', bs && bs.missing === true, 'missing=' + (bs && bs.missing))
+
+          /* ============ 6. 内层 resize 的列数上限 ============ */
+          // innerMetrics 不该再把 pad/labelH/headH/innerW/innerH 返回出去（外部从没读过）
+          var parent = store.getShortcut(f2.id)
+          var m = KL.grid.innerMetrics ? KL.grid.innerMetrics(parent) : null
+          if (m) {
+            ok('innerMetrics 不再返回无人读取的字段',
+              m.pad === undefined && m.headH === undefined && m.innerW === undefined,
+              Object.keys(m).join(','))
+            ok('innerMetrics 仍返回调用方需要的字段',
+              typeof m.cols === 'number' && typeof m.unit === 'number' && typeof m.gap === 'number')
+          } else {
+            out.push('SKIP:innerMetrics 未导出（不影响其它断言）')
+          }
+
+          W.services.exists = realExists
+          store.reset()
+          KL.grid.setCategory('all')
+          finish(out)
+        } catch (e2) {
+          out.push('ERROR:' + (e2 && e2.message))
+          finish(out)
+        }
+      }, 1200)
+    } catch (e) {
+      out.push('ERROR:' + (e && e.message))
+      finish(out)
+    }
+  }
+
+  function finish (out) {
+    var failed = 0
+    out.forEach(function (l) { if (l.indexOf('PASS') !== 0) failed++ })
+    var txt = (failed ? ('FAILED ' + failed + ' | ') : 'ALL PASS | ') + out.join('  ')
+    document.getElementById('log').textContent = txt
+    document.title = txt
+  }
+  </script>
+</body>
+</html>

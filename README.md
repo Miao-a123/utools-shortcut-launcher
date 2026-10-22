@@ -82,6 +82,7 @@ utools-shortcut-launcher/
 │   ├── folder-test.html   # 大文件夹回归测试（整页翻动 / 无页标 / 无名称 / 点空白处打开）
 │   ├── grid-layout-test.html # 主网格回归测试（图标/格子/名称的尺寸与位置）
 │   ├── data-test.html     # 数据层回归测试（目标丢失检测 / 合并导入的父子关系）
+│   ├── grid-behavior-test.html # grid 行为回归测试（选择集裁剪 / 角标存活 / 名称转义 / 拖拽收尾）
 │   ├── run-all-tests.sh   # 一键跑完全部回归测试（下面那些命令它都替你发了）
 │   ├── offline-test.js    # 联网开关自测（源码级验证 fetchFavicon 的离线闸门）
 │   ├── preload-test.js    # preload 安全/健壮性自测（命令注入 / 数据损坏保护 / 任意文件读 / SSRF）
@@ -157,7 +158,7 @@ node tools/release.js      # 生成 dist/ 并逐项做合规检查
 # 桥接层自测（需 Windows + PowerShell）
 node tools/selftest.js
 
-# 一键跑完所有回归测试（8 个浏览器测试 + 4 个 Node 测试，推荐）
+# 一键跑完所有回归测试（9 个浏览器测试 + 4 个 Node 测试，推荐）
 bash tools/run-all-tests.sh
 
 # ---------------------------------------------------------------

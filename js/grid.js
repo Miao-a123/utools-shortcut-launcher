@@ -10,6 +10,22 @@
 
   const RESIZE_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 8L8 12M12 4.5L4.5 12"/></svg>'
 
+  /* 只影响 CSS 变量、不需要重建网格的设置项。
+     这些由 app.js 的 applyVars() 直接写变量即可（设置面板也会自己调 applyVars），
+     网格结构完全没变。
+     ⚠️ 边界很窄，别乱加：
+       · tileBgColor / tileBorderColor / tileBorderWidth 虽然也是 CSS 变量，但
+         folder-test.html 会断言"内部格子的背景/描边与主网格一致"，而 `.inner-tile`
+         只在 buildInnerTile 时读变量 —— 不重渲染的话两边会不同步（我第一版把它们
+         列进来，folder-test 立刻红了 2 条）。所以它们必须留在重渲染路径里。
+       · cell / sidebarWidth / folderIconSize / showLabels / autoAlign / sortBy
+         会改变布局，更不能列进来。
+     真正只影响外观、且不参与任何"内外一致性"断言的，只有下面这些。 */
+  const CSS_ONLY_SETTINGS = [
+    'tileBgOpacity', 'tileRadius', 'theme', 'faviconService', 'faviconOnline',
+    'launchOnDoubleClick', 'hideOnLaunch', 'confirmDelete'
+  ]
+
   const GRID_MIME = 'application/x-kl-tile'
 
   let gridEl = null
@@ -50,9 +66,11 @@
      自动对齐开着时，图标靠 CSS grid 的 `grid-auto-flow: row dense` 排布，
      永远往上补齐空位；关掉以后每个图标按存下来的 (x, y) 明确落格，可以留空洞。
 
-     坐标只在这里算、不往数据里回写：
+     坐标在这里算，**已存在的坐标一律不回写**：
        · 避免"渲染 → 存盘 → 再渲染"打转；
-       · 窗口变窄导致的临时挤压也不会破坏用户已经摆好的位置（窗口变宽就复原）。 */
+       · 窗口变窄导致的临时挤压也不会破坏用户已经摆好的位置（窗口变宽就复原）。
+     唯一的例外是**从未有过坐标**的条目（x/y 为 null）：render 末尾会把它们钉到
+     当前算出来的格子上并落盘，否则每次渲染都会重新补空位、图标会跳（见 render 里的 pin）。 */
 
   const GRID_GAP = 10
   const LABEL_GAP = 4      // 名称与格子下沿之间的距离
@@ -152,7 +170,7 @@
         x = f.x
         y = f.y
       } else {
-        x = clamp(sc.x, 0, Math.max(0, m.cols - col))    // 窗口变窄先夹回来（不写回数据）
+        x = clamp(sc.x, 0, Math.max(0, m.cols - col))    // 窗口变窄先夹回来（已有坐标不写回）
         y = sc.y
         if (!p.fits(x, y, col, row)) {
           let ok = false
@@ -435,11 +453,16 @@
   }
 
   /* 文件夹的标题：位置、字号、折行、显隐完全走和图标名称同一套（都是 .label），
-     只是额外带一个数量。挂在 tile 上就是格子下方，点它自然冒泡到 tile → 打开文件夹。 */
+     只是额外带一个数量。挂在 tile 上就是格子下方，点它自然冒泡到 tile → 打开文件夹。
+
+     ⚠️ sc.name 必须 esc()：KL.ui.el 的第三个参数是 **innerHTML**，而 sc.name 来自
+     用户输入、文件名、以及导入的浏览器收藏夹标题。一个名为
+     `<img src=x onerror=...>` 的收藏夹条目会真的执行 —— 而 preload 暴露了 fs 能力。
+     dialogs.js 一直是老老实实 esc() 的，只有 grid.js 这里漏了。 */
   function folderLabel (sc, count) {
     const label = el('div', 'label')
     label.title = sc.name
-    const n = el('span', 'label-name', sc.name)
+    const n = el('span', 'label-name', esc(sc.name))
     label.appendChild(n)
     if (count) label.appendChild(el('span', 'label-count', String(count)))
     return label
@@ -485,11 +508,7 @@
       const listIcon = clamp(Math.round(iconMax * LIST_ICON_RATIO), 18, 96)
       const rowH = listIcon + LIST_CHROME
       const rows = Math.max(1, Math.floor((innerH + gap) / (rowH + gap)))
-      return {
-        list: true, cols: 1, icon: listIcon, unit: innerW, rowH: rowH, rows: rows,
-        gap: gap, pad: pad, labelH: 0, headH: headH,
-        innerW: innerW, innerH: innerH
-      }
+      return { list: true, cols: 1, icon: listIcon, unit: innerW, rowH: rowH, rows: rows, gap: gap }
     }
 
     /* 网格模式：挑一个「最能铺满」的 (列数, 行数) 组合。
@@ -558,10 +577,13 @@
       if (best) { cols = best.c; rows = best.r; size = best.s }
     }
 
+    /* 只返回调用方真正会读的字段：cols / rows / unit / rowH / gap / icon / list。
+       pad / labelH / headH / innerW / innerH 以前也返回，但外部从没读过
+       （innerW/innerH 只在函数内部用），headH 更是个恒为 0 的常量 ——
+       「标题画在格子外面、不占内部空间」这件事靠注释表达就够了，不需要一个值为 0 的变量。 */
     return {
       cols: cols, icon: Math.max(16, size - INNER_CHROME), unit: size, rowH: size, rows: rows,
-      gap: gap, pad: pad, labelH: 0, headH: headH,
-      innerW: innerW, innerH: innerH
+      gap: gap
     }
   }
   /* 内部图标的尺寸。格子边长（含跨格）乘 ICON_RATIO —— 和主网格的 iconSizeFor
@@ -585,6 +607,7 @@
      翻页只重绘这个文件夹的内部，不整屏 render（页码存在 folderPage 里不会丢）。 */
 
   const folderPage = {}    // folderId → 当前页码（0 起）
+  const folderPageIds = {} // folderId → 当前页在 tileNodes 里登记过的 id（翻页时清掉，见下）
 
   function folderPageCount (m, total) {
     return Math.max(1, Math.ceil(total / (m.cols * m.rows)))
@@ -597,12 +620,21 @@
     if (page < 0) page = 0
     folderPage[sc.id] = page
     inner.innerHTML = ''
+    /* 翻页前把上一页登记过的 id 从 tileNodes 里摘掉。
+       坑：inner.innerHTML = '' 只是把节点从文档上摘下来，tileNodes 里仍留着指向
+       游离节点的引用 —— syncSelection 会对它们 classList.toggle，
+       beginRubber 会对它们取 getBoundingClientRect（全 0 矩形，靠 x1===0 侥幸跳过）。 */
+    const prev = folderPageIds[sc.id]
+    if (prev) for (const id of prev) if (tileNodes[id]) delete tileNodes[id]
     const show = kids.slice(page * m.cols * m.rows, (page + 1) * m.cols * m.rows)
+    const ids = []
     for (const k of show) {
       const node = buildInnerTile(k, m, sc)
       inner.appendChild(node)
       tileNodes[k.id] = node
+      ids.push(k.id)
     }
+    folderPageIds[sc.id] = ids
     centerLastRow(show, m)
     return pages
   }
@@ -622,23 +654,17 @@
     if (show.some(k => (k.col || 1) > 1 || (k.row || 1) > 1)) return
     const left = show.length % cols
     if (!left) return                       // 整页刚好排满
-    const offset = Math.floor((cols - left) / 2)
+    /* 统一用像素居中，不再按格数 floor + 半格特判。
+       以前两个分支的取整方向是相反的：5 列装 2 个走 `floor((5-2)/2)=1` → 偏左半格；
+       5 列装 4 个 offset=0 走半格分支 → 偏右。同样是"没排满"，偏心方向却不一样。
+       现在直接按"剩余宽度的中点"平移，任何 left/cols 组合都精确居中。 */
+    const offsetPx = Math.round((cols - left) * (m.unit + m.gap) / 2)
+    if (!offsetPx) return
     const tail = show.slice(show.length - left)
-    if (offset > 0) {
-      // 能整格挪就整格挪（3 列装 1 个 → 挪到中间那列）
-      for (let i = 0; i < tail.length; i++) {
-        const node = tileNodes[tail[i].id]
-        if (node) node.style.gridColumnStart = String(offset + 1 + i)
-      }
-      return
-    }
-    /* 只缺一个（4 列装 3 个这种）时整格挪会挪过头，必须挪**半格**。
-       格子轨道是固定像素，挪不了半列，所以用 transform 平移；
-       用 transform 而不是 margin-left：后者会把格子挤窄。 */
-    const half = Math.round((m.unit + m.gap) / 2)
     for (const k of tail) {
       const node = tileNodes[k.id]
-      if (node) node.style.transform = 'translateX(' + half + 'px)'
+      // 用 transform 而不是 margin-left：后者会把格子挤窄
+      if (node) node.style.transform = 'translateX(' + offsetPx + 'px)'
     }
   }
 
@@ -901,6 +927,33 @@
     return tile
   }
 
+  /* 拖拽缩放的三处（主网格 / 文件夹 / 文件夹内部）共用的收尾逻辑。
+     坑：以前只有 mouseup 能收尾，而**鼠标在窗口外松开时收不到 mouseup**（Alt+Tab、
+     拖出窗口边界都会），于是监听器留在 document 上、光标永久卡在 nwse-resize，
+     之后任何 mousemove 都会继续改 col/row 并重写 gridColumn —— 用户只是移动鼠标，
+     图标尺寸就跟着变。attachNameTip 的注释里早就写了这个坑，但 resize 这三处没防。
+     现在：window blur 也收尾；mousemove 里发现按键已经松开（buttons === 0）也收尾。 */
+  function trackResizeDrag (onMove, onFinish) {
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      document.removeEventListener('mousemove', move)
+      document.removeEventListener('mouseup', finish)
+      window.removeEventListener('blur', finish)
+      document.body.style.cursor = ''
+      onFinish()
+    }
+    const move = ev => {
+      if (ev.buttons === 0) return finish()   // 在窗口外松开了，收不到 mouseup
+      onMove(ev)
+    }
+    document.body.style.cursor = 'nwse-resize'
+    document.addEventListener('mousemove', move)
+    document.addEventListener('mouseup', finish)
+    window.addEventListener('blur', finish)
+  }
+
   function attachFolderResize (tile, sc) {
     const handle = el('div', 'resize', RESIZE_SVG)
     handle.title = '拖动调整尺寸'
@@ -925,10 +978,7 @@
         tile.style.gridColumn = info.startCol ? info.startCol + ' / span ' + col : 'span ' + col
         tile.style.gridRow = info.startRow ? info.startRow + ' / span ' + row : 'span ' + row
       }
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove)
-        document.removeEventListener('mouseup', onUp)
-        document.body.style.cursor = ''
+      trackResizeDrag(onMove, () => {
         if (col !== sc.col || row !== sc.row) {
           store.batch(() => {
             store.updateShortcut(sc.id, { col: col, row: row })
@@ -937,10 +987,7 @@
         } else {
           render()
         }
-      }
-      document.body.style.cursor = 'nwse-resize'
-      document.addEventListener('mousemove', onMove)
-      document.addEventListener('mouseup', onUp)
+      })
     })
   }
 
@@ -958,24 +1005,25 @@
       const parent = store.getShortcut(sc.parentId)
       const m = parent ? innerMetrics(parent) : { unit: 40, gap: 4 }
       const step = m.unit + m.gap
+      /* 列数上限必须跟着文件夹内部的实际列数走。
+         以前这里硬夹 1..4，完全不看 m.cols —— 而文件夹常见只有 2~3 列，
+         往里拖到 span 3/4 会生成**隐式列**，被 .folder-inner 的 overflow:hidden 裁掉，
+         表现为"拖大之后图标被切了一半、右边多个空洞"，而且 col=4 会被存进 store。
+         主网格的 attachResize 有 capCol，这份漏了（实现不一致）。
+         列表模式本来就是一行一个（buildInnerTile 强制 span 1），别让手柄改 col。 */
+      const capCol = m.list ? 1 : Math.max(1, Math.min(4, m.cols || 4))
       let col = baseCol
       let row = baseRow
       const onMove = ev => {
-        col = clamp(baseCol + Math.round((ev.clientX - startX) / step), 1, 4)
+        col = clamp(baseCol + Math.round((ev.clientX - startX) / step), 1, capCol)
         row = clamp(baseRow + Math.round((ev.clientY - startY) / step), 1, 4)
         tile.style.gridColumn = 'span ' + col
         tile.style.gridRow = 'span ' + row
       }
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove)
-        document.removeEventListener('mouseup', onUp)
-        document.body.style.cursor = ''
+      trackResizeDrag(onMove, () => {
         if (col !== baseCol || row !== baseRow) store.updateShortcut(sc.id, { col: col, row: row })
         else render()
-      }
-      document.body.style.cursor = 'nwse-resize'
-      document.addEventListener('mousemove', onMove)
-      document.addEventListener('mouseup', onUp)
+      })
     })
   }
 
@@ -1289,10 +1337,7 @@
         row = clamp(baseRow + Math.round((ev.clientY - startY) / stepY), 1, 4)
         applyVisual()
       }
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove)
-        document.removeEventListener('mouseup', onUp)
-        document.body.style.cursor = ''
+      trackResizeDrag(onMove, () => {
         if (col !== sc.col || row !== sc.row) {
           store.batch(() => {
             store.updateShortcut(sc.id, { col: col, row: row })
@@ -1301,10 +1346,7 @@
         } else {
           render()
         }
-      }
-      document.body.style.cursor = 'nwse-resize'
-      document.addEventListener('mousemove', onMove)
-      document.addEventListener('mouseup', onUp)
+      })
     })
   }
 
@@ -1326,8 +1368,26 @@
     syncSelection()
   }
 
+  /* 把选择集裁剪到「当前屏幕上真的能看见的」那部分。
+     为什么必须有：selected 是模块级 Set，搜索 / 切分类只换关键字和分类后重绘，
+     从不清理它。于是会出现"已选 3 项"但屏幕只剩 1 项的情况 —— 此时右键菜单拿到的
+     ids 是 3 个，点"删除 3 项"会把两个**当前根本看不见**的图标一起删掉（实测复现：
+     选中 A/B/C → 搜"A" → 删除 → 3 项全没了）。
+     选择「裁剪」而不是「全清」：全清会让用户一搜索就丢掉已经选好的东西，体验更差。 */
+  function pruneSelection (list) {
+    const keep = new Set(list.map(s => s.id))
+    let changed = false
+    Array.from(selected).forEach(id => {
+      if (!keep.has(id)) { selected.delete(id); changed = true }
+    })
+    if (changed) syncSelection()
+    return changed
+  }
+
   function selectAll () {
     const list = store.visible(currentCategory, keyword)
+    // 先裁剪再并入：否则"搜索后 Ctrl+A"会把搜索前选中的隐藏项一起带上
+    pruneSelection(list)
     list.forEach(s => selected.add(s.id))
     syncSelection()
   }
@@ -1357,8 +1417,9 @@
   }
 
   function dropOn (ids, targetId, before) {
-    const cat = currentCategory === 'all' || currentCategory === 'none' ? currentCategory : currentCategory
-    const categoryId = cat === 'all' ? undefined : (cat === 'none' ? null : cat)
+    // 以前这里有个恒真的三元式：`a === 'all' || a === 'none' ? a : a`，两个分支一样。
+    // 照 dropAtEnd 的写法直接用 currentCategory。
+    const categoryId = currentCategory === 'all' ? undefined : (currentCategory === 'none' ? null : currentCategory)
     if (store.settings.sortBy !== 'manual') {
       store.setSetting('sortBy', 'manual')
       toast('已切换为手动排序')
@@ -1439,14 +1500,24 @@
     document.addEventListener('mouseup', onUp)
   }
 
+  /* 只刷新图标与名称文本，**不能重建 label 结构**。
+     坑：以前这里是 `lb.textContent = sc.name`，会把整个子树替换成一个裸文本节点 ——
+     文件夹的 label 是 folderLabel() 造的两段结构（.label-name + .label-count），
+     于是"选中文件夹 → 刷新图标"会把数量角标抹掉，直到下次 render 才回来。
+     拉长格子里还有第三份名称 .tile-name-fill，以前完全没更新。 */
   function refreshTile (id) {
     const sc = store.getShortcut(id)
     const node = tileNodes[id]
     if (!sc || !node) return
     const img = node.querySelector('img.icon')
     if (img) img.src = KL.icons.resolve(sc)
+    const nm = node.querySelector('.label .label-name')
     const lb = node.querySelector('.label')
-    if (lb) lb.textContent = sc.name
+    if (nm) nm.textContent = sc.name          // 文件夹：只换文本，保留 .label-count
+    else if (lb) lb.textContent = sc.name     // 普通图标：label 里只有一个文本节点
+    if (lb) lb.title = sc.name
+    const fill = node.querySelector('.tile-name-fill')
+    if (fill) { fill.textContent = sc.name; fill.title = sc.name }
   }
 
   function setBusy (id, busy) {
@@ -1465,17 +1536,31 @@
      于是所有条目都被 continue 掉，红点检测从来没生效过（真实数据里 126 个本地目标
      有 10 个已失效，却一个红点都没有）。
      url 与 appid 无法用 fs.existsSync 判断（url 不是文件、appid 是 shell:AppsFolder 虚拟路径），
-     所以只对 path 生效。 */
+     所以只对 path 生效。
+
+     另一个坑：传进来的 list 是 store.visible() 的结果，而它**只返回顶层项**
+     （store.inCategory 用 `!s.parentId` 过滤）。所以文件夹内部的图标从来没被检查过 ——
+     buildInnerTile 里 `if (sc.missing)` 是个永远不会成立的分支；
+     反过来，一个在顶层被标了 missing 的图标移进文件夹后，红点会永久挂着。
+     现在把「当前可见的文件夹的子项」一并纳入检查范围。 */
   function checkMissing (list) {
     if (missingTimer) clearTimeout(missingTimer)
     missingTimer = setTimeout(() => {
-      for (const sc of list) {
+      const scope = list.slice()
+      for (const s of list) {
+        if (s.kind !== 'folder') continue
+        const kids = store.childrenOf(s.id)
+        for (const k of kids) scope.push(k)
+      }
+      for (const sc of scope) {
         if (sc.launch.kind !== 'path') continue
         if (!sc.launch.target) continue
         const exists = S.exists(sc.launch.target)
         if (!!sc.missing !== !exists) {
-          sc.missing = !exists
-          store.save()
+          /* 走 store API 而不是直接改字段：保证 updatedAt 与批量语义。
+             必须 silent —— 否则会在 render 收尾阶段再抛一次 shortcuts 事件、重入 render
+             （这正是 setPositions 那个 silent 参数存在的原因）。 */
+          store.updateShortcut(sc.id, { missing: !exists }, { silent: true })
           const node = tileNodes[sc.id]
           if (node) {
             let badge = node.querySelector('.badge')
@@ -1502,8 +1587,10 @@
         okText: '删除',
         danger: true
       })
+      // removeShortcut 内部已经 emit('shortcuts') → store.on 的 handler 会 render，
+      // 这里只在"没删"的时候补一次 render（以前是无条件再 render 一次，纯重复）
       if (go) store.removeShortcut(sc.id)
-      render()
+      else render()
       return
     }
     const r = await S.launch(sc)
@@ -1615,10 +1702,16 @@
       items.push({ separator: true })
     }
 
+    /* 批量改尺寸 / 改分类必须包在 store.batch() 里。
+       以前是裸 forEach —— 每个 updateShortcut 都 emit('shortcuts')，而 store.on 的
+       handler 每次都 render()（gridEl.innerHTML='' 全量重建），选 20 个图标改尺寸
+       就是 20 次全量重建。app.js 里等价的批量操作一直是包 batch 的，这里漏了。 */
     const sizeItems = sizePresets().map(p => ({
       label: p[0] + ' × ' + p[1],
       onClick: () => {
-        ids.forEach(id => store.updateShortcut(id, { col: p[0], row: p[1] }))
+        store.batch(() => {
+          ids.forEach(id => store.updateShortcut(id, { col: p[0], row: p[1] }))
+        })
         render()
       }
     }))
@@ -1627,13 +1720,13 @@
     const catItems = [{
       label: '未分类',
       onClick: () => {
-        ids.forEach(id => store.setCategory(id, null))
+        store.batch(() => { ids.forEach(id => store.setCategory(id, null)) })
         render()
       }
     }].concat(store.categories.map(c => ({
       label: c.name,
       onClick: () => {
-        ids.forEach(id => store.setCategory(id, c.id))
+        store.batch(() => { ids.forEach(id => store.setCategory(id, c.id)) })
         toast('已移动到「' + c.name + '」')
         render()
       }
@@ -1738,7 +1831,26 @@
         repack()
         return
       }
+      /* 只改 CSS 变量的设置项不要整屏重建。
+         这些键由 app.js 的 applyVars() 直接写 CSS 变量就够，网格结构完全没变。
+         以前它们一律走 render()（gridEl.innerHTML = '' 全量重建 + layoutFree 全量重排 +
+         checkMissing），而滑块拖动的 input 事件是每像素一次 —— 拖「图标格子大小」
+         92→160 会触发约 68 次全量重建，图标多时肉眼可见卡顿。
+         注意 cell / sidebarWidth / folderIconSize 确实需要重排，不能列进来。 */
+      if (type === 'settings' && payload && CSS_ONLY_SETTINGS.indexOf(payload.key) >= 0) return
       if (type === 'shortcuts' || type === 'settings') render()
+    })
+
+    /* 窗口尺寸变化必须重排。
+       自由摆放模式下每个图标的位置是写死的 gridColumn（如 `3 / span 2`），
+       而列数是 gridMetrics() 从 CSS 轨道数算出来的、只在 render() 时算一次。
+       窗口变窄后轨道数变少，但已写入的 gridColumn 不变 → 超出新列数的图标生成隐式列、
+       横向溢出。以前全项目没有任何 resize 监听，所以这个状态会一直持续到下次 render。
+       用防抖：拖动窗口时 resize 会连发几十次，每次都全量重建太浪费。 */
+    let resizeTimer = null
+    window.addEventListener('resize', () => {
+      if (resizeTimer) clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(() => { resizeTimer = null; render() }, 150)
     })
 
     render()
@@ -1755,17 +1867,24 @@
     repack: repack,
     layoutFree: layoutFree,
     gridMetrics: gridMetrics,
+    innerMetrics: innerMetrics,   // 供测试断言"返回字段与调用方需要对齐"
     dropFree: dropFree,
     setCategory: function (id) {
       currentCategory = id || 'all'
-      if (currentCategory !== 'all') selected.clear()
       render()
+      // 切分类后屏幕内容变了，选择集必须跟着裁剪（见 pruneSelection 的说明）。
+      // 以前只在 `!== 'all'` 时 selected.clear()，切回「全部」会把旧选择留着。
+      pruneSelection(store.visible(currentCategory, keyword))
       syncSelection()
     },
     getCategory: function () { return currentCategory },
     setKeyword: function (kw) {
       keyword = kw || ''
       render()
+      /* 搜索后必须裁剪选择集 —— 这是「误删看不见的图标」的根因。
+         注意要在 render() 之后做：render 不依赖 selected 的内容（只是给 tile 打 class）。 */
+      pruneSelection(store.visible(currentCategory, keyword))
+      syncSelection()
     },
     getKeyword: function () { return keyword },
     selectedIds: function () { return Array.from(selected) },

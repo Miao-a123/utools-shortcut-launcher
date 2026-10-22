@@ -8,6 +8,139 @@
 
 ---
 
+## v1.8.4 — grid.js 深审：选择集泄漏 / 角标被抹 / XSS / 性能（2026-10-22）
+
+对 `js/grid.js`（约 1900 行，布局核心）做了一次逐段通读 + 跨文件核对契约。
+18 条缺陷里 4 条用户可见、8 条潜伏、6 条注释/死代码债。下面按危害排序。
+
+### 1. 搜索后批量删除会删掉**看不见的**图标（🔴 会丢数据）
+
+`selected` 是模块级 Set，而 `setKeyword` / `setCategory` 只换关键字、重绘，**从不裁剪它**。
+
+复现（已实测）：Ctrl 选中 A/B/C → 搜索只命中 A → 屏幕只剩 A、底部条显示"已选 3 项" →
+右键 A 点"删除 3 项" → `removeShortcuts([A,B,C])` **把两个当前根本看不见的图标一起删了**。
+探针实测 `3 -> 0`，用户以为只删了屏幕上那一个。
+
+同源：`selectAll` 是纯并集不清空，所以"搜索后 Ctrl+A"会把搜索前选中的隐藏项也带上
+（实测搜索态下 Ctrl+A 选中了 4 项，屏幕上只有 1 项）。
+
+**修法**：新增 `pruneSelection(list)`，在 `setKeyword` / `setCategory` / `selectAll` 里把选择集
+裁剪到"当前可见"那部分。
+**被否决的方案**：直接 `selected.clear()`。否决理由 —— 用户一搜索就丢掉已经选好的东西，
+体验更差；而且切分类时全清会让"跨分类批量移动"这类操作没法做。
+
+### 2. `refreshTile` 抹掉文件夹的数量角标（🔴）
+
+```js
+const lb = node.querySelector('.label')
+if (lb) lb.textContent = sc.name       // ← 整个子树被替换成一个裸文本节点
+```
+
+文件夹的 label 是 `folderLabel()` 造的两段结构（`.label-name` + `.label-count`），
+`textContent` 一赋值，`.label-count` 直接消失。而 `refreshTile` 确实会作用在文件夹上
+（工具栏"刷新图标"、批量菜单都取 `selectedIds()`，可以是文件夹）。
+复现：选中文件夹 → 刷新图标 → 数量角标没了，直到下次 render 才回来。
+
+**修法**：优先更新 `.label-name` 的文本，不动结构；顺带补上以前完全没更新的
+`.tile-name-fill`（拉长格子里那份常驻名称）。
+
+### 3. 文件夹名称未转义 → HTML 注入（🔴）
+
+```js
+const n = el('span', 'label-name', sc.name)   // el 的第三个参数是 innerHTML
+```
+
+`sc.name` 来自用户输入、文件名、**以及导入的浏览器收藏夹标题**。
+一个名为 `<img src=x onerror=...>` 的收藏夹条目会真的执行，而 preload 暴露了 fs 能力。
+`grid.js` 顶部明明 `const esc = KL.ui.esc` 导入了，全文却再没用过第二次
+（`dialogs.js` 是老老实实 `esc()` 的十几处）。已补 `esc()`。
+
+### 4. 文件夹内部的 resize 没有列数上限（🔴）
+
+`attachInnerResize` 把 span 硬夹在 `1..4`，**完全不看文件夹内部的实际列数 `m.cols`**（常见 2–3）。
+往里拖到 `span 3/4` 会生成**隐式列**，被 `.folder-inner { overflow: hidden }` 裁掉 ——
+表现为"拖大以后图标被切了一半、右边多个空洞"，而且 `col=4` 会被存进 store。
+主网格的 `attachResize` 有 `capCol`，这份漏了（实现不一致）。
+**修法**：`capCol = m.list ? 1 : min(4, m.cols)`；列表模式本来就是一行一个。
+
+### 5. 文件夹内部的图标永远检测不到红点（🟡 功能缺口）
+
+`checkMissing(list)` 的 `list` 来自 `store.visible()`，而它**只返回顶层项**
+（`inCategory` 用 `!s.parentId` 过滤）。所以：
+- 文件夹内的图标 `missing` 永远是初始 `false`，`buildInnerTile` 里 `if (sc.missing)` 是死分支；
+- 反过来，在顶层被标了 missing 的图标移进文件夹后，红点会**永久挂着**。
+
+**修法**：把当前可见文件夹的 `childrenOf` 一并纳入检查范围。
+
+### 6. 设置滑块每像素触发一次整屏重建（🟡 性能）
+
+`store.on` 的 handler 对任何 `settings` 事件都 `render()`（`gridEl.innerHTML = ''` 全量重建 +
+`layoutFree` 全量重排 + `checkMissing`），而 range 的 `input` 事件是**每像素一次** ——
+拖「图标格子大小」92→160 约 68 次全量重建。`dialogs.js:1743` 更糟：侧边栏滑块先 `setSetting`
+（已触发一次 render），又手动 `KL.grid.render()` 再来一次。
+
+**修法**：新增 `CSS_ONLY_SETTINGS` 白名单，只改 CSS 变量的键直接 return 不重建。
+**这个白名单的边界很窄**，我第一版把 `tileBgColor` / `tileBorderColor` 也列了进去，
+`folder-test.html` 立刻红了 2 条 —— 因为 `.inner-tile` 只在 `buildInnerTile` 时读变量，
+不重渲染会导致"内部格子与主网格背景/描边不一致"。已把这两项退回重渲染路径，并在代码里写明原因。
+
+### 7. 批量改尺寸/改分类缺 `store.batch`（🟡 性能）
+
+`showTileMenu` 里三处裸 `ids.forEach(store.updateShortcut)`，每次 `emit('shortcuts')` 都会
+触发一次 `render()` —— 选 20 个图标改尺寸就是 20 次全量重建。
+`app.js` 里等价的批量操作一直是包 `store.batch()` 的，这里漏了。已包上。
+
+### 8. 三处拖拽 resize 不处理"丢失 mouseup"（🟡）
+
+`onUp` 是唯一恢复 `document.body.style.cursor` 的地方。**鼠标在窗口外松开时收不到 mouseup**
+（Alt+Tab、拖出窗口边界），于是光标永久卡在 `nwse-resize`，之后任何 `mousemove` 都继续改
+`col/row` 并重写 `gridColumn` —— 用户只是移动鼠标，图标尺寸就在变。
+`attachNameTip` 的注释里早就写了这个坑，但 resize 三处没做同样的防御。
+
+**修法**：抽出 `trackResizeDrag(onMove, onFinish)`，`mouseup` / `window blur` /
+`mousemove` 里发现 `buttons === 0` 三条路都收尾。
+
+### 9. 其它
+
+- **无 `window.resize` 监听**：自由摆放的坐标是写死的 `gridColumn`，列数只在 `render()` 时算。
+  窗口变窄后轨道数变少、`gridColumn` 不变 → 生成隐式列、横向溢出。已加防抖 150ms 的 resize 监听。
+- **`folderPage` 只写不清 + 翻页残留游离节点**：`inner.innerHTML=''` 只把节点从文档摘掉，
+  `tileNodes` 仍指向它们，`syncSelection` / `beginRubber` 会对游离节点操作。已加 `folderPageIds` 追踪清理。
+- **`centerLastRow` 两分支取整方向相反**：5 列装 2 个走 `floor` 偏左、装 4 个走 `round` 偏右。
+  改成统一按像素居中（`(cols-left)*(unit+gap)/2`），任何组合都精确居中。
+- **`dropOn` 恒真三元式**：`a==='all'||a==='none' ? a : a`，两个分支完全一样。照 `dropAtEnd` 改写。
+- **`launch` 删完又 render 一次**：`removeShortcut` 内部已 `emit` → 会 render。改为只在"没删"时 render。
+- **`checkMissing` 绕过 store API**：直接 `sc.missing = ...` + `store.save()`，不更新 `updatedAt`。
+  改为 `store.updateShortcut(id, {missing}, {silent:true})`（必须 silent，否则重入 render）。
+- **`innerMetrics` 返回 5 个无人读取的字段**：`pad/labelH/headH/innerW/innerH` 外部从没读过，
+  `headH` 更是恒为 0 的常量。已删除返回字段（`headH` 在函数内部仍用于算 `innerH`，保留）。
+- **两条注释互相矛盾**：53 行说"坐标不往数据里回写"，1082 行却 `store.setPositions(pin, true)` 回写。
+  后者是对的（不回写会导致每次渲染重新补空位、图标跳动），已把 53 行改成准确表述。
+- **CSS 特异性注释把顺序说反**：`.grid .tile.tall` 与 `.grid.hide-labels .tile` 都是 3 个 class
+  （0,3,0），平局按源码顺序 —— 而后者写在后面，所以**后者赢**。注释却说"靠位置在后面生效"。
+  实测确认：无字模式下拉长格子 `gap` 从 6px 变 0px，图标和格内名称贴在一起。
+  已把这两条移到 `gap: 0` 之后。
+
+### 验证
+
+- 新增 `tools/grid-behavior-test.html`（**19 条断言**），已接入 `run-all-tests.sh`。
+  覆盖：选择集裁剪（含"删除只影响可见项"的真实危害验证）/ 数量角标存活 / 名称转义（含
+  "onerror 未执行"）/ 无字模式下拉长格子的 gap / 文件夹内红点 / `innerMetrics` 字段对齐。
+- **用 `git stash` 撤掉修复重跑 → 12 条变红**，精确复现了上面每一条；装回后 19 条全 PASS。
+- 全量：**9 个浏览器测试 + 4 个 Node 测试全绿**
+  （uitest 16 / dedup 16 / tip 22 / layout 35 / grid-layout 47 / data 15 /
+  **grid-behavior 19** / folder 74+75 / offline 12 / preload 40 / doc 45 / release 全过）。
+- 中途出现过一次回归：`CSS_ONLY_SETTINGS` 第一版把 `tileBgColor` / `tileBorderColor` 列了进去，
+  `folder-test.html` 的"内部格子与主网格同一背景色/描边颜色"2 条立刻变红 —— 已修正。
+  这条正好说明既有测试的价值。
+
+> 未在真机 uTools 里复验（改动全在渲染层）。用户真实数据未被触碰（测试都在独立
+> `--user-data-dir` 的 mock 模式里跑）。
+> 审查中明确"未发现缺陷"的部分：`makePacker` / `groupItems` / `groupOrigin` / `placeGroup`
+> 成组落点链、`settleFree`、`innerIconSize`、翻页边界、`setBusy` 幂等性、`beginRubber` 过滤。
+
+---
+
 ## v1.8.3 — 文档与代码一致性（2026-10-22）
 
 对 README / CHANGELOG / 使用手册做了一次逐条核对。**使用手册是提交 uTools 审核的物料**，
