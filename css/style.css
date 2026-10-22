@@ -307,22 +307,40 @@ input.search:focus { border-color: var(--accent); background: var(--surface); }
    所以 .tile.tall / .tile.wide 不去动 .label 的定位。 */
 .tile-name-fill { display: none; }
 
-/* 拉长格子里「图标 + 格内名称」两段内容的间距。
+/* 拉长格子里「图标 + 格内名称」两段内容的排版。
    ⚠️ 特异度坑：`.grid .tile.tall` 与下面 `.grid.hide-labels .tile { gap: 0 }` 都是
    3 个 class（0,3,0），平局按**源码顺序**决定 —— 所以这两条必须写在它**之后**才生效。
    以前它们写在前、注释还写着"靠位置在后面生效"（把顺序说反了），实际效果是
-   无字模式下 gap 被覆盖成 0，图标和格内名称贴在一起。 */
+   无字模式下 gap 被覆盖成 0，图标和格内名称贴在一起。
+
+   视觉目标：格内这份名称要**像图标自己的说明文字**，而不是和格子下方那份抢戏 ——
+   所以用次要色（--text-2）、比下方名称更小一点、行距更紧，并且和图标垂直居中对齐。
+   （以前是全强度文字色 + 11.5px，和格子下方的名称几乎一模一样，看起来像重复。） */
 .grid .tile.tall .tile-name-fill,
 .grid .tile.wide .tile-name-fill {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  font-size: 11.5px; line-height: 1.25;
-  word-break: break-all;
+  font-size: 11px; line-height: 1.2;
+  letter-spacing: .2px;
+  color: var(--text-2);
+  opacity: .92;
+  /* 用 ellipsis 而不是 break-all：英文/路径类名字不会在半个单词处硬断 */
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
-.grid .tile.tall .tile-name-fill { width: 100%; text-align: center; }
-.grid .tile.wide .tile-name-fill { flex: 1 1 auto; min-width: 0; text-align: left; }
+/* 竖条：名称在图标下方，水平居中、离图标留一点呼吸 */
+.grid .tile.tall .tile-name-fill {
+  width: 100%; text-align: center;
+  padding-top: 2px;
+}
+/* 横条：名称在图标右侧，垂直居中、靠左，作为图标的"标签" */
+.grid .tile.wide .tile-name-fill {
+  flex: 1 1 auto; min-width: 0; text-align: left;
+  align-self: center;
+  padding-right: 6px;
+}
 
 .grid.hide-labels .tile .label { display: none; }
 .grid.hide-labels .tile { gap: 0; }

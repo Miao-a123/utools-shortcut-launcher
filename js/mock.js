@@ -333,7 +333,16 @@
         else if (dlg === 'settings') KL.dialogs.settings()
         else if (dlg === 'add') KL.dialogs.addUrl()
         else if (dlg === 'edit' || dlg === 'icon') {
-          const sc = KL.store.shortcuts[0]
+          /* 截图用：?idx=名称或序号 指定要编辑哪一条（默认第 0 条 = 第一个文件夹，
+             而文件夹没有可提取的图标，预览框会是空的 —— 出图时应该指一个有图标的条目）。 */
+          const want = PARAMS.get('idx')
+          let sc = null
+          if (want !== null && want !== '') {
+            const asNum = Number(want)
+            if (isFinite(asNum) && String(asNum) === String(want)) sc = KL.store.shortcuts[asNum]
+            if (!sc) sc = KL.store.shortcuts.filter(function (s) { return s.name === want })[0]
+          }
+          if (!sc) sc = KL.store.shortcuts[0]
           if (!sc) return
           if (dlg === 'edit') KL.dialogs.editShortcut(sc, function () {})
           else KL.dialogs.iconPicker(sc, function () {})
@@ -367,6 +376,8 @@
         }
         const auto = PARAMS.get('auto')
         if (auto) {
+          /* 截图用：dlg 打开后延时再点按钮。第一次延时 1200ms 是为了等弹窗内容
+             真正渲染出来（scanApps 的按钮在弹窗构建时才 append）。 */
           setTimeout(function () {
             const want = auto === 'scan' ? '开始扫描' : auto === 'all' ? '全选本页' : auto
             const btns = Array.prototype.slice.call(document.querySelectorAll('.modal button, .modal .chip'))
@@ -379,9 +390,9 @@
                 const bs = Array.prototype.slice.call(document.querySelectorAll('.modal button, .modal .chip'))
                 const t2 = bs.filter(function (b) { return b.textContent.trim() === want2 })[0]
                 if (t2) t2.click()
-              }, 900)
+              }, 1500)
             }
-          }, 700)
+          }, 1200)
         }
       } catch (e) { console.error(e) }
     }, 500)
